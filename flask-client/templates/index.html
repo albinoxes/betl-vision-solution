@@ -7,6 +7,30 @@
         <h1>Build Web App Using Flask and SQLite</h1>
         <button class="btn" type="button" onclick="window.location.href='{{ url_for('join') }}';">Fill form to get updates</button><br/>
         <button class="btn" type="button" onclick="window.location.href='{{ url_for('participants') }}';">Check participant list</button><br/>
-        <img src="/video" width="640">
+
+        <button id="toggleVideo" class="btn" type="button">Start Video</button><br/>
+        <img id="webcamVideoFeed" width="640" style="display:none" alt="Video feed will appear here">
+
+        <script>
+            (function(){
+                const btn = document.getElementById('toggleVideo');
+                const img = document.getElementById('webcamVideoFeed');
+                let running = false;
+
+                btn.addEventListener('click', function(){
+                    if (!running) {
+                        img.src = '/video';
+                        img.style.display = 'block';
+                        btn.textContent = 'Stop Video';
+                        running = true;
+                    } else {
+                        img.removeAttribute('src');
+                        img.style.display = 'none';
+                        btn.textContent = 'Start Video';
+                        running = false;
+                    }
+                });
+            })();
+        </script>
     </body>
 </html>
