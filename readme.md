@@ -12,3 +12,10 @@
     - belt-vision-solution\webcam-server> python -m venv webcam_env
     - belt-vision-solution\webcam-server> .\webcam_env\Scripts\Activate.ps1
     - belt-vision-solution\webcam-server> pip install opencv-python, flask
+
+3) legacy-camera-server:
+    - belt-vision-solution\webcam-server> python -m venv legacy_camera_env
+    - .\legacy_camera_env\Scripts\Activate.ps1
+    - pip install .\visiontransfer-10.6.0-cp312-cp312-win_amd64.whl
+    - pip install flask
+    - pip install "numpy<2.0"
