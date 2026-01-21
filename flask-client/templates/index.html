@@ -5,9 +5,9 @@
     </head>
     <body>
         <h1>Belt Vision Board</h1>
-        <button class="btn" type="button" onclick="window.location.href='{{ url_for('camera_manager') }}';">Go to the camera-manager</button><br/>
-        <button class="btn" type="button" onclick="window.location.href='{{ url_for('join') }}';">Fill form to get updates</button><br/>
-        <button class="btn" type="button" onclick="window.location.href='{{ url_for('participants') }}';">Check participant list</button><br/>
+        <button class="btn" type="button" onclick="window.location.href='{{ url_for('camera.camera_manager') }}';">Go to the camera-manager</button><br/>
+        <button class="btn" type="button" onclick="window.location.href='{{ url_for('participants.join') }}';">Fill form to get updates</button><br/>
+        <button class="btn" type="button" onclick="window.location.href='{{ url_for('participants.participants') }}';">Check participant list</button><br/>
 
         <button id="toggleVideo" class="btn" type="button">Start Webcam Video</button><br/>
         <img id="webcamVideoFeed" width="640" style="display:none" alt="Video feed will appear here"><br/>
