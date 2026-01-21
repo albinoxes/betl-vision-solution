@@ -1,5 +1,5 @@
 import requests
-from flask import Flask, render_template, request, Response
+from flask import Flask, render_template, request, Response, jsonify
 import sqlite3
 
 app = Flask(__name__)
@@ -65,6 +65,46 @@ def generate_legacy_frames():
 def legacy_camera_video():
     return generate_legacy_frames()
 
+@app.route('/connected-devices')
+def connected_devices():
+    devices = []
+    try:
+        # Query legacy-camera-server
+        legacy_response = requests.get('http://localhost:5002/devices', timeout=5)
+        if legacy_response.status_code == 200:
+            legacy_devices = legacy_response.json()
+            for dev in legacy_devices:
+                devices.append({
+                    'type': 'legacy',
+                    'id': dev['id'],
+                    'info': dev['info'],
+                    'ip': dev['info'].split(';')[0] if ';' in dev['info'] else 'unknown',
+                    'status': dev['status']
+                })
+    except:
+        pass  # Server not running or error
+
+    try:
+        # Query webcam-server
+        webcam_response = requests.get('http://localhost:5001/devices', timeout=5)
+        if webcam_response.status_code == 200:
+            webcam_devices = webcam_response.json()
+            for dev in webcam_devices:
+                devices.append({
+                    'type': 'webcam',
+                    'id': dev['id'],
+                    'info': dev['info'],
+                    'ip': 'localhost',
+                    'status': dev['status']
+                })
+    except:
+        pass
+
+    return jsonify(devices)
+
+@app.route('/camera-manager')
+def camera_manager():
+    return render_template('camera-manager.html')
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)

@@ -3,7 +3,7 @@ import sys
 import io
 from PIL import Image
 import visiontransfer
-from flask import Flask, Response
+from flask import Flask, Response, jsonify
 
 app = Flask(__name__)
 
@@ -59,6 +59,19 @@ def generate_video_stream():
 def video():
     return Response(generate_video_stream(),
                 mimetype="multipart/x-mixed-replace; boundary=frame")
+
+@app.route('/devices')
+def get_devices():
+    device_enum = visiontransfer.DeviceEnumeration()
+    devices = device_enum.discover_devices()
+    device_list = []
+    for i, info in enumerate(devices):
+        device_list.append({
+            'id': i,
+            'info': str(info),
+            'status': 'available'
+        })
+    return jsonify(device_list)
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5002)

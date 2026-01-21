@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <title>Belt Vision Camera Manager</title>
+        <script>
+            async function loadDevices() {
+                const response = await fetch('/connected-devices');
+                const devices = await response.json();
+                const tableBody = document.getElementById('deviceTableBody');
+                tableBody.innerHTML = '';
+                devices.forEach(device => {
+                    const row = document.createElement('tr');
+                    row.innerHTML = `
+                        <td>${device.type}</td>
+                        <td>${device.id}</td>
+                        <td>${device.info}</td>
+                        <td>${device.ip}</td>
+                        <td>${device.status}</td>
+                    `;
+                    tableBody.appendChild(row);
+                });
+            }
+            window.onload = loadDevices;
+        </script>
+    </head>
+    <body>
+        <h1>Connected Devices</h1>
+        <table border="1">
+            <thead>
+                <tr>
+                    <th>Type</th>
+                    <th>ID</th>
+                    <th>Info</th>
+                    <th>IP Address</th>
+                    <th>Status</th>
+                </tr>
+            </thead>
+            <tbody id="deviceTableBody">
+            </tbody>
+        </table>
+        <button onclick="loadDevices()">Refresh</button>
+    </body>
+</html>
