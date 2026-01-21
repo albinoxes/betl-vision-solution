@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>ML Model Manager</title>
+    <style>
+        table {
+            border-collapse: collapse;
+            width: 100%;
+        }
+        th, td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: left;
+        }
+        th {
+            background-color: #f2f2f2;
+        }
+        .upload-form {
+            margin: 20px 0;
+            padding: 20px;
+            border: 1px solid #ccc;
+            background-color: #f9f9f9;
+        }
+        .upload-form input, .upload-form select {
+            margin: 5px 0;
+            padding: 5px;
+            width: 200px;
+        }
+        .upload-form button {
+            padding: 10px 20px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            cursor: pointer;
+        }
+        .upload-form button:hover {
+            background-color: #45a049;
+        }
+    </style>
+</head>
+<body>
+    <h1>ML Model Manager</h1>
+
+    <div class="upload-form">
+        <h2>Upload New Model</h2>
+        <form action="{{ url_for('camera.upload_model') }}" method="post" enctype="multipart/form-data">
+            <label for="model_file">Select Model File:</label><br>
+            <input type="file" id="model_file" name="model_file" required><br><br>
+
+            <label for="name">Model Name:</label><br>
+            <input type="text" id="name" name="name" placeholder="e.g., yolov5" required><br><br>
+
+            <label for="version">Version:</label><br>
+            <input type="text" id="version" name="version" placeholder="e.g., 1.0.0" required><br><br>
+
+            <label for="model_type">Model Type:</label><br>
+            <select id="model_type" name="model_type" required>
+                <option value="">Select type</option>
+                <option value="onnx">ONNX</option>
+                <option value="pytorch">PyTorch</option>
+                <option value="pickle">Pickle</option>
+                <option value="tensorflow">TensorFlow</option>
+                <option value="other">Other</option>
+            </select><br><br>
+
+            <label for="description">Description (optional):</label><br>
+            <textarea id="description" name="description" rows="3" cols="50" placeholder="Optional description"></textarea><br><br>
+
+            <button type="submit">Upload Model</button>
+        </form>
+    </div>
+
+    <h2>Available Models</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Name</th>
+                <th>Version</th>
+                <th>Type</th>
+                <th>Description</th>
+                <th>Created At</th>
+                <th>Updated At</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for model in models %}
+            <tr>
+                <td>{{ model[0] }}</td>
+                <td>{{ model[1] }}</td>
+                <td>{{ model[2] }}</td>
+                <td>{{ model[3] }}</td>
+                <td>{{ model[4] or 'N/A' }}</td>
+                <td>{{ model[5] }}</td>
+                <td>{{ model[6] }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    {% if not models %}
+    <p>No models uploaded yet.</p>
+    {% endif %}
+
+    <br>
+    <button onclick="window.location.href='{{ url_for('participants.index') }}'">Back to Home</button>
+</body>
+</html>
