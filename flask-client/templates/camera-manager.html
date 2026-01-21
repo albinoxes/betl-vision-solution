@@ -16,9 +16,19 @@
                         <td>${device.info}</td>
                         <td>${device.ip}</td>
                         <td>${device.status}</td>
+                        <td><button onclick="viewStream('${device.type}', ${device.id})">View Stream</button></td>
                     `;
                     tableBody.appendChild(row);
                 });
+            }
+            function viewStream(type, id) {
+                const videoFeed = document.getElementById('videoFeed');
+                if (type === 'legacy') {
+                    videoFeed.src = `/legacy-camera-video/${id}`;
+                } else {
+                    videoFeed.src = '/video';
+                }
+                document.getElementById('videoContainer').style.display = 'block';
             }
             window.onload = loadDevices;
         </script>
@@ -33,11 +43,16 @@
                     <th>Info</th>
                     <th>IP Address</th>
                     <th>Status</th>
+                    <th>Action</th>
                 </tr>
             </thead>
             <tbody id="deviceTableBody">
             </tbody>
         </table>
         <button onclick="loadDevices()">Refresh</button>
+        <div id="videoContainer" style="display:none; margin-top:20px;">
+            <h2>Video Feed</h2>
+            <img id="videoFeed" width="640" alt="Video feed will appear here">
+        </div>
     </body>
 </html>

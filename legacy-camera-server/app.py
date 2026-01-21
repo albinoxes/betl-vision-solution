@@ -7,30 +7,26 @@ from flask import Flask, Response, jsonify
 
 app = Flask(__name__)
 
-def connect_device():
+def connect_device(device_id):
     device_enum = visiontransfer.DeviceEnumeration()
     devices = device_enum.discover_devices()
-    if len(devices) < 1:
-        print('No devices found')
-        sys.exit(1)
+    if len(devices) < 1 or device_id >= len(devices):
+        print('No devices found or invalid device ID')
+        return None
 
-    print('Found these devices:')
-    for i, info in enumerate(devices):
-        print(f'  {i+1}: {info}')
-    selected_device = 0 if len(devices)==1 else (int(input('Device to open: ') or '1')-1)
-    device = devices[selected_device]
+    device = devices[device_id]
 
     try:
         transfer = visiontransfer.AsyncTransfer(device)
-        print('Successfully connected to the device.')
+        print(f'Successfully connected to device {device_id}.')
         return transfer
     except Exception as e:
         print('Failed to connect to the device.')
         print('Error:', e)
         return None
 
-def generate_video_stream():
-    transfer = connect_device()
+def generate_video_stream(device_id):
+    transfer = connect_device(device_id)
     if transfer is None:
         return
     while True:
@@ -38,7 +34,7 @@ def generate_video_stream():
             image_set = transfer.collect_received_image_set()
             if image_set is None:
                 print('No image captured. Attempting to reconnect...')
-                transfer = connect_device()
+                transfer = connect_device(device_id)
                 continue
             img2d = image_set.get_pixel_data(0, force8bit=True)  # assuming left channel is channel 0
             # Encode the image as JPEG using PIL
@@ -52,12 +48,12 @@ def generate_video_stream():
             print('Failed to capture image.')
             print('Error:', e)
             print('Attempting to reconnect...')
-            transfer = connect_device()
+            transfer = connect_device(device_id)
             continue
 
-@app.route('/camera-video')
-def video():
-    return Response(generate_video_stream(),
+@app.route('/camera-video/<int:device_id>')
+def video(device_id):
+    return Response(generate_video_stream(device_id),
                 mimetype="multipart/x-mixed-replace; boundary=frame")
 
 @app.route('/devices')

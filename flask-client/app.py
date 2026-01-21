@@ -54,16 +54,12 @@ def generate_frames():
 def video():
     return generate_frames()
 
-LEGACY_CAMERA_URL = "http://localhost:5002/camera-video"
-
-def generate_legacy_frames():
-    r = requests.get(LEGACY_CAMERA_URL, stream=True)
+@app.route('/legacy-camera-video/<int:device_id>')
+def legacy_camera_video(device_id):
+    url = f"http://localhost:5002/camera-video/{device_id}"
+    r = requests.get(url, stream=True)
     return Response(r.iter_content(chunk_size=1024),
                     mimetype='multipart/x-mixed-replace; boundary=frame')
-
-@app.route('/legacy-camera-video')
-def legacy_camera_video():
-    return generate_legacy_frames()
 
 @app.route('/connected-devices')
 def connected_devices():
