@@ -1,2 +1,4 @@
 ﻿flask-client/flask_env
 webcam-server/webcam_env
+legacy_cam_env
+webcam_env
