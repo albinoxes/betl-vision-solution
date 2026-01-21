@@ -1,4 +1,7 @@
-from time import time
+import time
+import sys
+import io
+from PIL import Image
 import visiontransfer
 from flask import Flask, Response
 
@@ -31,7 +34,6 @@ def generate_video_stream():
     if transfer is None:
         return
     while True:
-        loop_start_time = time.time()  # start timing the process loop
         try:
             image_set = transfer.collect_received_image_set()
             if image_set is None:
@@ -39,11 +41,13 @@ def generate_video_stream():
                 transfer = connect_device()
                 continue
             img2d = image_set.get_pixel_data(0, force8bit=True)  # assuming left channel is channel 0
-            img2d = img2d[y:y+h, x:x+w]         
-            print('Image captured.')
-            
-            # Get capture time as timestamp
-            timestamp = time.strftime("%d.%m.%Y %H:%M:%S", time.gmtime())
+            # Encode the image as JPEG using PIL
+            img = Image.fromarray(img2d)
+            buffer = io.BytesIO()
+            img.save(buffer, format='JPEG')
+            frame = buffer.getvalue()
+            yield (b'--frame\r\n'
+                   b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
         except Exception as e:
             print('Failed to capture image.')
             print('Error:', e)

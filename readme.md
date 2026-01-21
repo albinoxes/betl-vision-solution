@@ -19,3 +19,4 @@
     - pip install .\legacy-camera-server\wheel\visiontransfer-10.6.0-cp312-cp312-win_amd64.whl
     - pip install flask
     - pip install "numpy<2.0"
+    - pip install Pillow
