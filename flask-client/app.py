@@ -54,6 +54,17 @@ def generate_frames():
 def video():
     return generate_frames()
 
+LEGACY_CAMERA_URL = "http://localhost:5002/camera-video"
+
+def generate_legacy_frames():
+    r = requests.get(LEGACY_CAMERA_URL, stream=True)
+    return Response(r.iter_content(chunk_size=1024),
+                    mimetype='multipart/x-mixed-replace; boundary=frame')
+
+@app.route('/legacy-camera-video')
+def legacy_camera_video():
+    return generate_legacy_frames()
+
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)
