@@ -1,5 +1,5 @@
 from flask import Blueprint, render_template, request
-from sqlite.database import init_db, add_participant, get_participants
+from sqlite.participants_sqlite_provider import init_db, add_participant, get_participants
 
 participants_bp = Blueprint('participants', __name__)
 
