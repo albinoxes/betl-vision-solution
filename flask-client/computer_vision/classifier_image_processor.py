@@ -1,3 +1,6 @@
+from PIL import Image
+import torch 
+
 # Run belt_status Classifier Model
 def classifier_process_image(img2d, classifier_model, class_names, transform):
     # Convert the NumPy array to a PIL Image

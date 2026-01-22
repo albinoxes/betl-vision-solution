@@ -1,3 +1,5 @@
+import cv2
+
 # Run boulder detection model
 def object_process_image(img2d, model, min_conf, pixels_per_mm, particle_bb_dimension_factor, est_particle_volume_x, est_particle_volume_exp):
     # Convert RGBA image to RGB
