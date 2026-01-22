@@ -28,19 +28,20 @@ class MLSQLiteProvider:
                     data BLOB NOT NULL,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    category TEXT NOT NULL DEFAULT 'model',
                     UNIQUE(name, version)
                 )
             ''')
             # Create index for faster lookups
             conn.execute('CREATE INDEX IF NOT EXISTS idx_ml_models_name_version ON ml_models(name, version)')
 
-    def insert_model(self, name: str, version: str, model_type: str, data: bytes, description: Optional[str] = None) -> int:
+    def insert_model(self, name: str, version: str, model_type: str, data: bytes, description: Optional[str] = None, category: str = 'model') -> int:
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute('''
-                INSERT INTO ml_models (name, version, model_type, description, data)
-                VALUES (?, ?, ?, ?, ?)
-            ''', (name, version, model_type, description, data))
+                INSERT INTO ml_models (name, version, model_type, description, data, category)
+                VALUES (?, ?, ?, ?, ?, ?)
+            ''', (name, version, model_type, description, data, category))
             conn.commit()
             return cursor.lastrowid
 
@@ -82,8 +83,20 @@ class MLSQLiteProvider:
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute('''
-                SELECT id, name, version, model_type, description, created_at
+                SELECT id, name, version, model_type, description, created_at, updated_at
                 FROM ml_models
+                WHERE category = 'model'
+                ORDER BY name, version
+            ''')
+            return cursor.fetchall()
+
+    def list_classifiers(self) -> list:
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT id, name, version, model_type, description, created_at, updated_at
+                FROM ml_models
+                WHERE category = 'classifier'
                 ORDER BY name, version
             ''')
             return cursor.fetchall()
@@ -105,6 +118,38 @@ class MLSQLiteProvider:
             cursor.execute('DELETE FROM ml_models WHERE name = ? AND version = ?', (name, version))
             conn.commit()
             return cursor.rowcount > 0
+
+    def delete_model_by_id(self, model_id: int) -> bool:
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute('DELETE FROM ml_models WHERE id = ?', (model_id,))
+            conn.commit()
+            return cursor.rowcount > 0
+
+    def load_ml_model(self, name: str, version: str):
+        data = self.get_model_data(name, version)
+        if not data:
+            return None
+        model_info = self.get_model(name, version)
+        if not model_info:
+            return None
+        category = model_info[8]  # category
+        model_type = model_info[3]
+        import io
+        if category == 'model':
+            from ultralytics import YOLO
+            return YOLO(io.BytesIO(data))
+        elif category == 'classifier':
+            import torch
+            import torchvision.models as models
+            model = models.resnet18(pretrained=False)
+            num_classes = 3
+            model.fc = torch.nn.Linear(model.fc.in_features, num_classes)
+            state_dict = torch.load(io.BytesIO(data))
+            model.load_state_dict(state_dict)
+            model.eval()
+            return model
+        return None
 
 # Convenience instance for global use
 ml_provider = MLSQLiteProvider()

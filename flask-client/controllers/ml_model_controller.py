@@ -6,7 +6,8 @@ ml_bp = Blueprint('ml', __name__)
 def model_manager():
     from sqlite.ml_sqlite_provider import ml_provider
     models = ml_provider.list_models()
-    return render_template('model-manager.html', models=models)
+    classifiers = ml_provider.list_classifiers()
+    return render_template('model-manager.html', models=models, classifiers=classifiers)
 
 @ml_bp.route('/upload-model', methods=['POST'])
 def upload_model():
@@ -19,14 +20,18 @@ def upload_model():
     name = request.form.get('name')
     version = request.form.get('version')
     model_type = request.form.get('model_type')
+    category = request.form.get('category', 'model')
     description = request.form.get('description')
 
     if not all([name, version, model_type]):
         return "Missing required fields", 400
 
     data = file.read()
-    try:
-        ml_provider.insert_model(name, version, model_type, data, description)
-        return redirect(url_for('ml.model_manager'))
-    except Exception as e:
-        return f"Error uploading model: {str(e)}", 500
+    ml_provider.insert_model(name, version, model_type, data, description, category)
+    return redirect(url_for('ml.model_manager'))
+
+@ml_bp.route('/delete-model/<int:model_id>', methods=['POST'])
+def delete_model(model_id):
+    from sqlite.ml_sqlite_provider import ml_provider
+    ml_provider.delete_model_by_id(model_id)
+    return redirect(url_for('ml.model_manager'))
