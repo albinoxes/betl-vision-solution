@@ -187,6 +187,60 @@ def connected_devices():
 @camera_bp.route('/camera-manager')
 def camera_manager():
     from sqlite.ml_sqlite_provider import ml_provider
+    from sqlite.camera_settings_sqlite_provider import camera_settings_provider
     models = ml_provider.list_models()
     classifiers = ml_provider.list_classifiers()
-    return render_template('camera-manager.html', models=models, classifiers=classifiers)
+    settings = camera_settings_provider.list_settings()
+    return render_template('camera-manager.html', models=models, classifiers=classifiers, settings=settings)
+
+@camera_bp.route('/add-camera-settings', methods=['POST'])
+def add_camera_settings():
+    from sqlite.camera_settings_sqlite_provider import camera_settings_provider
+
+    name = request.form.get('name')
+    min_conf = float(request.form.get('min_conf', 0.8))
+    min_d_detect = int(request.form.get('min_d_detect', 200))
+    min_d_save = int(request.form.get('min_d_save', 200))
+    particle_bb_dimension_factor = float(request.form.get('particle_bb_dimension_factor', 0.9))
+    est_particle_volume_x = float(request.form.get('est_particle_volume_x', 8.357470139e-11))
+    est_particle_volume_exp = float(request.form.get('est_particle_volume_exp', 3.02511466443))
+
+    if not name:
+        return "Name is required", 400
+
+    camera_settings_provider.insert_settings(name, min_conf, min_d_detect, min_d_save, particle_bb_dimension_factor, est_particle_volume_x, est_particle_volume_exp)
+    return redirect(url_for('camera.camera_manager'))
+
+@camera_bp.route('/update-camera-settings/<setting_name>', methods=['POST'])
+def update_camera_settings(setting_name):
+    from sqlite.camera_settings_sqlite_provider import camera_settings_provider
+
+    min_conf = request.form.get('min_conf')
+    min_d_detect = request.form.get('min_d_detect')
+    min_d_save = request.form.get('min_d_save')
+    particle_bb_dimension_factor = request.form.get('particle_bb_dimension_factor')
+    est_particle_volume_x = request.form.get('est_particle_volume_x')
+    est_particle_volume_exp = request.form.get('est_particle_volume_exp')
+
+    updates = {}
+    if min_conf:
+        updates['min_conf'] = float(min_conf)
+    if min_d_detect:
+        updates['min_d_detect'] = int(min_d_detect)
+    if min_d_save:
+        updates['min_d_save'] = int(min_d_save)
+    if particle_bb_dimension_factor:
+        updates['particle_bb_dimension_factor'] = float(particle_bb_dimension_factor)
+    if est_particle_volume_x:
+        updates['est_particle_volume_x'] = float(est_particle_volume_x)
+    if est_particle_volume_exp:
+        updates['est_particle_volume_exp'] = float(est_particle_volume_exp)
+
+    camera_settings_provider.update_settings(setting_name, **updates)
+    return redirect(url_for('camera.camera_manager'))
+
+@camera_bp.route('/delete-camera-settings/<setting_name>', methods=['POST'])
+def delete_camera_settings(setting_name):
+    from sqlite.camera_settings_sqlite_provider import camera_settings_provider
+    camera_settings_provider.delete_settings(setting_name)
+    return redirect(url_for('camera.camera_manager'))
