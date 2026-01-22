@@ -60,4 +60,7 @@ def connected_devices():
 
 @camera_bp.route('/camera-manager')
 def camera_manager():
-    return render_template('camera-manager.html')
+    from sqlite.ml_sqlite_provider import ml_provider
+    models = ml_provider.list_models()
+    classifiers = ml_provider.list_classifiers()
+    return render_template('camera-manager.html', models=models, classifiers=classifiers)

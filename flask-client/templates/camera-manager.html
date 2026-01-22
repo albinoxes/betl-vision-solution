@@ -10,12 +10,29 @@
                 tableBody.innerHTML = '';
                 devices.forEach(device => {
                     const row = document.createElement('tr');
+                    
+                    // Build model select
+                    let modelOptions = '<option value="">Select Model</option>';
+                    window.models.forEach(model => {
+                        modelOptions += `<option value="${model[1]}">${model[1]} (${model[2]})</option>`;
+                    });
+                    const modelSelect = `<select>${modelOptions}</select>`;
+                    
+                    // Build classifier select
+                    let classifierOptions = '<option value="">Select Classifier</option>';
+                    window.classifiers.forEach(classifier => {
+                        classifierOptions += `<option value="${classifier[1]}">${classifier[1]} (${classifier[2]})</option>`;
+                    });
+                    const classifierSelect = `<select>${classifierOptions}</select>`;
+                    
                     row.innerHTML = `
                         <td>${device.type}</td>
                         <td>${device.id}</td>
                         <td>${device.info}</td>
                         <td>${device.ip}</td>
                         <td>${device.status}</td>
+                        <td>${modelSelect}</td>
+                        <td>${classifierSelect}</td>
                         <td><button onclick="viewStream('${device.type}', ${device.id})">View Stream</button></td>
                     `;
                     tableBody.appendChild(row);
@@ -32,6 +49,10 @@
             }
             window.onload = loadDevices;
         </script>
+        <script>
+            window.models = {{ models|tojson }};
+            window.classifiers = {{ classifiers|tojson }};
+        </script>
     </head>
     <body>
         <h1>Connected Devices</h1>
@@ -43,6 +64,8 @@
                     <th>Info</th>
                     <th>IP Address</th>
                     <th>Status</th>
+                    <th>ML Model</th>
+                    <th>Classifier</th>
                     <th>Action</th>
                 </tr>
             </thead>
