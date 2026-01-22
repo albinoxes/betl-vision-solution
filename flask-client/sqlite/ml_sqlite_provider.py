@@ -34,18 +34,8 @@ class MLSQLiteProvider:
             ''')
             # Create index for faster lookups
             conn.execute('CREATE INDEX IF NOT EXISTS idx_ml_models_name_version ON ml_models(name, version)')
-            # Add category column if not exists (for existing databases)
-            try:
-                conn.execute('ALTER TABLE ml_models ADD COLUMN category TEXT DEFAULT \'model\'')
-            except sqlite3.OperationalError:
-                pass  # Column already exists
-            # Add updated_at column if not exists
-            try:
-                conn.execute('ALTER TABLE ml_models ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP')
-            except sqlite3.OperationalError:
-                pass  # Column already exists
 
-    def insert_model(self, name: str, version: str, model_type: str, data: bytes, description: Optional[str] = None, category: str = 'model') -> int:
+    def insert_model(self, name: str, version: str, model_type: str, data: bytes, description: Optional[str] = None) -> int:
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute('''
