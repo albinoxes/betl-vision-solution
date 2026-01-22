@@ -36,12 +36,24 @@
         .upload-form button:hover {
             background-color: #45a049;
         }
+        .btn {
+            padding: 10px 20px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            cursor: pointer;
+        }
+        .btn:hover {
+            background-color: #45a049;
+        }
     </style>
 </head>
 <body>
     <h1>ML Model Manager</h1>
 
-    <div class="upload-form">
+    <button id="addModelBtn" class="btn" type="button">Add a new model</button><br/><br/>
+
+    <div class="upload-form" id="uploadForm" style="display:none;">
         <h2>Upload New Model</h2>
         <form action="{{ url_for('ml.upload_model') }}" method="post" enctype="multipart/form-data">
             <label for="model_file">Select Model File:</label><br>
@@ -104,5 +116,16 @@
 
     <br>
     <button onclick="window.location.href='{{ url_for('participants.index') }}'">Back to Home</button>
+
+    <script>
+        document.getElementById('addModelBtn').addEventListener('click', function() {
+            const form = document.getElementById('uploadForm');
+            if (form.style.display === 'none') {
+                form.style.display = 'block';
+            } else {
+                form.style.display = 'none';
+            }
+        });
+    </script>
 </body>
 </html>
