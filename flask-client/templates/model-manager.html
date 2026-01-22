@@ -43,7 +43,7 @@
 
     <div class="upload-form">
         <h2>Upload New Model</h2>
-        <form action="{{ url_for('camera.upload_model') }}" method="post" enctype="multipart/form-data">
+        <form action="{{ url_for('ml.upload_model') }}" method="post" enctype="multipart/form-data">
             <label for="model_file">Select Model File:</label><br>
             <input type="file" id="model_file" name="model_file" required><br><br>
 
