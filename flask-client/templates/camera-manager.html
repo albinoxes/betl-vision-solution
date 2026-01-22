@@ -10,27 +10,80 @@
                 tableBody.innerHTML = '';
                 devices.forEach(device => {
                     const row = document.createElement('tr');
+                    
+                    // Build model select
+                    let modelOptions = '<option value="">Select Model</option>';
+                    window.models.forEach(model => {
+                        modelOptions += `<option value="${model[1]}:${model[2]}">${model[1]} (${model[2]})</option>`;
+                    });
+                    const modelSelect = `<select>${modelOptions}</select>`;
+                    
+                    // Build classifier select
+                    let classifierOptions = '<option value="">Select Classifier</option>';
+                    window.classifiers.forEach(classifier => {
+                        classifierOptions += `<option value="${classifier[1]}:${classifier[2]}">${classifier[1]} (${classifier[2]})</option>`;
+                    });
+                    const classifierSelect = `<select>${classifierOptions}</select>`;
+                    
                     row.innerHTML = `
                         <td>${device.type}</td>
                         <td>${device.id}</td>
                         <td>${device.info}</td>
                         <td>${device.ip}</td>
                         <td>${device.status}</td>
-                        <td><button onclick="viewStream('${device.type}', ${device.id})">View Stream</button></td>
+                        <td>${modelSelect}</td>
+                        <td>${classifierSelect}</td>
+                        <td><button onclick="viewStream('${device.type}', ${device.id}, this)">View Stream</button></td>
                     `;
                     tableBody.appendChild(row);
                 });
             }
-            function viewStream(type, id) {
+            function viewStream(type, id, btn) {
+                const row = btn.closest('tr');
+                const selects = row.querySelectorAll('select');
+                const modelValue = selects[0].value;
+                const classifierValue = selects[1].value;
+                let url = type === 'legacy' ? `/legacy-camera-video/${id}` : '/video';
+                const params = [];
+                if (modelValue) params.push(`model=${encodeURIComponent(modelValue)}`);
+                if (classifierValue) params.push(`classifier=${encodeURIComponent(classifierValue)}`);
+                if (params.length) url += '?' + params.join('&');
                 const videoFeed = document.getElementById('videoFeed');
-                if (type === 'legacy') {
-                    videoFeed.src = `/legacy-camera-video/${id}`;
-                } else {
-                    videoFeed.src = '/video';
-                }
+                videoFeed.src = url;
                 document.getElementById('videoContainer').style.display = 'block';
             }
-            window.onload = loadDevices;
+            window.onload = function() {
+                loadDevices();
+                document.getElementById('addSettingsBtn').addEventListener('click', function() {
+                    const form = document.getElementById('settingsForm');
+                    if (form.style.display === 'none') {
+                        form.style.display = 'block';
+                    } else {
+                        form.style.display = 'none';
+                    }
+                });
+            };
+
+            function editSettings(name, min_conf, min_d_detect, min_d_save, bb_factor, vol_x, vol_exp) {
+                document.getElementById('edit_setting_name').value = name;
+                document.getElementById('edit_min_conf').value = min_conf;
+                document.getElementById('edit_min_d_detect').value = min_d_detect;
+                document.getElementById('edit_min_d_save').value = min_d_save;
+                document.getElementById('edit_particle_bb_dimension_factor').value = bb_factor;
+                document.getElementById('edit_est_particle_volume_x').value = vol_x;
+                document.getElementById('edit_est_particle_volume_exp').value = vol_exp;
+                document.getElementById('editForm').action = '{{ url_for("camera.update_camera_settings", setting_name="") }}'.replace('setting_name=', 'setting_name=' + name);
+                document.getElementById('editSettingsForm').style.display = 'block';
+            }
+
+            function cancelEdit() {
+                document.getElementById('editSettingsForm').style.display = 'none';
+            }
+        </script>
+        <script>
+            window.models = {{ models|tojson }};
+            window.classifiers = {{ classifiers|tojson }};
+            window.settings = {{ settings|tojson }};
         </script>
     </head>
     <body>
@@ -43,6 +96,8 @@
                     <th>Info</th>
                     <th>IP Address</th>
                     <th>Status</th>
+                    <th>ML Model</th>
+                    <th>Classifier</th>
                     <th>Action</th>
                 </tr>
             </thead>
@@ -50,6 +105,102 @@
             </tbody>
         </table>
         <button onclick="loadDevices()">Refresh</button>
+
+        <h2>Camera Settings</h2>
+        <button id="addSettingsBtn">Add New Camera Settings</button><br/><br/>
+
+        <div id="settingsForm" style="display:none;">
+            <h3>Add New Camera Settings</h3>
+            <form action="{{ url_for('camera.add_camera_settings') }}" method="post">
+                <label for="setting_name">Settings Name:</label><br>
+                <input type="text" id="setting_name" name="name" required><br><br>
+
+                <label for="min_conf">Min Confidence:</label><br>
+                <input type="number" step="0.01" id="min_conf" name="min_conf" value="0.8" required><br><br>
+
+                <label for="min_d_detect">Min D Detect:</label><br>
+                <input type="number" id="min_d_detect" name="min_d_detect" value="200" required><br><br>
+
+                <label for="min_d_save">Min D Save:</label><br>
+                <input type="number" id="min_d_save" name="min_d_save" value="200" required><br><br>
+
+                <label for="particle_bb_dimension_factor">Particle BB Dimension Factor:</label><br>
+                <input type="number" step="0.01" id="particle_bb_dimension_factor" name="particle_bb_dimension_factor" value="0.9" required><br><br>
+
+                <label for="est_particle_volume_x">Est Particle Volume X:</label><br>
+                <input type="number" step="0.000000000000000001" id="est_particle_volume_x" name="est_particle_volume_x" value="0.00000000008357470139" required><br><br>
+
+                <label for="est_particle_volume_exp">Est Particle Volume Exp:</label><br>
+                <input type="number" step="0.00000000001" id="est_particle_volume_exp" name="est_particle_volume_exp" value="3.02511466443" required><br><br>
+
+                <button type="submit">Add Settings</button>
+            </form>
+        </div>
+
+        <table border="1">
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>Min Conf</th>
+                    <th>Min D Detect</th>
+                    <th>Min D Save</th>
+                    <th>BB Factor</th>
+                    <th>Vol X</th>
+                    <th>Vol Exp</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for setting in settings %}
+                <tr>
+                    <td>{{ setting[1] }}</td>
+                    <td>{{ setting[2] }}</td>
+                    <td>{{ setting[3] }}</td>
+                    <td>{{ setting[4] }}</td>
+                    <td>{{ setting[5] }}</td>
+                    <td>{{ setting[6] }}</td>
+                    <td>{{ setting[7] }}</td>
+                    <td>
+                        <button onclick="editSettings('{{ setting[1] }}', {{ setting[2] }}, {{ setting[3] }}, {{ setting[4] }}, {{ setting[5] }}, {{ setting[6] }}, {{ setting[7] }})">Update</button>
+                        {% if setting[1] != 'default' %}
+                        <form action="{{ url_for('camera.delete_camera_settings', setting_name=setting[1]) }}" method="post" style="display:inline;">
+                            <button type="submit" onclick="return confirm('Are you sure you want to delete this setting?');">Delete</button>
+                        </form>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+
+        <div id="editSettingsForm" style="display:none;">
+            <h3>Edit Camera Settings</h3>
+            <form action="" method="post" id="editForm">
+                <input type="hidden" id="edit_setting_name" name="setting_name">
+
+                <label for="edit_min_conf">Min Confidence:</label><br>
+                <input type="number" step="0.01" id="edit_min_conf" name="min_conf" required><br><br>
+
+                <label for="edit_min_d_detect">Min D Detect:</label><br>
+                <input type="number" id="edit_min_d_detect" name="min_d_detect" required><br><br>
+
+                <label for="edit_min_d_save">Min D Save:</label><br>
+                <input type="number" id="edit_min_d_save" name="min_d_save" required><br><br>
+
+                <label for="edit_particle_bb_dimension_factor">Particle BB Dimension Factor:</label><br>
+                <input type="number" step="0.01" id="edit_particle_bb_dimension_factor" name="particle_bb_dimension_factor" required><br><br>
+
+                <label for="edit_est_particle_volume_x">Est Particle Volume X:</label><br>
+                <input type="number" step="0.000000000000000001" id="edit_est_particle_volume_x" name="est_particle_volume_x" required><br><br>
+
+                <label for="edit_est_particle_volume_exp">Est Particle Volume Exp:</label><br>
+                <input type="number" step="0.00000000001" id="edit_est_particle_volume_exp" name="est_particle_volume_exp" required><br><br>
+
+                <button type="submit">Update Settings</button>
+                <button type="button" onclick="cancelEdit()">Cancel</button>
+            </form>
+        </div>
+
         <div id="videoContainer" style="display:none; margin-top:20px;">
             <h2>Video Feed</h2>
             <img id="videoFeed" width="640" alt="Video feed will appear here">
