@@ -140,6 +140,7 @@
         <table border="1">
             <thead>
                 <tr>
+                    <th>ID</th>
                     <th>Name</th>
                     <th>Min Conf</th>
                     <th>Min D Detect</th>
@@ -153,6 +154,7 @@
             <tbody>
                 {% for setting in settings %}
                 <tr>
+                    <td>{{ setting[0] }}</td>
                     <td>{{ setting[1] }}</td>
                     <td>{{ setting[2] }}</td>
                     <td>{{ setting[3] }}</td>
