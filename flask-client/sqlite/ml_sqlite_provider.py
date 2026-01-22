@@ -126,5 +126,30 @@ class MLSQLiteProvider:
             conn.commit()
             return cursor.rowcount > 0
 
+    def load_ml_model(self, name: str, version: str):
+        data = self.get_model_data(name, version)
+        if not data:
+            return None
+        model_info = self.get_model(name, version)
+        if not model_info:
+            return None
+        category = model_info[8]  # category
+        model_type = model_info[3]
+        import io
+        if category == 'model':
+            from ultralytics import YOLO
+            return YOLO(io.BytesIO(data))
+        elif category == 'classifier':
+            import torch
+            import torchvision.models as models
+            model = models.resnet18(pretrained=False)
+            num_classes = 3
+            model.fc = torch.nn.Linear(model.fc.in_features, num_classes)
+            state_dict = torch.load(io.BytesIO(data))
+            model.load_state_dict(state_dict)
+            model.eval()
+            return model
+        return None
+
 # Convenience instance for global use
 ml_provider = MLSQLiteProvider()
