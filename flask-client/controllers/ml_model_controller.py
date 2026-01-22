@@ -25,8 +25,11 @@ def upload_model():
         return "Missing required fields", 400
 
     data = file.read()
-    try:
-        ml_provider.insert_model(name, version, model_type, data, description)
-        return redirect(url_for('ml.model_manager'))
-    except Exception as e:
-        return f"Error uploading model: {str(e)}", 500
+    ml_provider.insert_model(name, version, model_type, data, description)
+    return redirect(url_for('ml.model_manager'))
+
+@ml_bp.route('/delete-model/<int:model_id>', methods=['POST'])
+def delete_model(model_id):
+    from sqlite.ml_sqlite_provider import ml_provider
+    ml_provider.delete_model_by_id(model_id)
+    return redirect(url_for('ml.model_manager'))

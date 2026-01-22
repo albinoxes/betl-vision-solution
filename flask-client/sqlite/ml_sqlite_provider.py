@@ -106,5 +106,12 @@ class MLSQLiteProvider:
             conn.commit()
             return cursor.rowcount > 0
 
+    def delete_model_by_id(self, model_id: int) -> bool:
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute('DELETE FROM ml_models WHERE id = ?', (model_id,))
+            conn.commit()
+            return cursor.rowcount > 0
+
 # Convenience instance for global use
 ml_provider = MLSQLiteProvider()
