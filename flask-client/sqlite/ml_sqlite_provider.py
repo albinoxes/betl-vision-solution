@@ -35,7 +35,7 @@ class MLSQLiteProvider:
             # Create index for faster lookups
             conn.execute('CREATE INDEX IF NOT EXISTS idx_ml_models_name_version ON ml_models(name, version)')
 
-    def insert_model(self, name: str, version: str, model_type: str, data: bytes, description: Optional[str] = None) -> int:
+    def insert_model(self, name: str, version: str, model_type: str, data: bytes, description: Optional[str] = None, category: str = 'model') -> int:
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute('''
