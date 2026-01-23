@@ -1,5 +1,37 @@
 import cv2
 from sqlite.camera_settings_sqlite_provider import camera_settings_provider
+from sqlite.ml_sqlite_provider import ml_provider
+
+
+def get_model_from_database(model_id=None):
+    """
+    Get ML model from the database.
+    If model_id is None, returns the first available model.
+    
+    Args:
+        model_id: String in format "name:version" or None for first available model
+    
+    Returns:
+        Loaded model object or None
+    """
+    if model_id is not None:
+        # Parse model_id as "name:version"
+        if ':' in model_id:
+            name, version = model_id.split(':', 1)
+        else:
+            name = model_id
+            version = '1.0.0'
+        model = ml_provider.load_ml_model(name, version)
+    else:
+        # Get first available model
+        all_models = ml_provider.list_models()
+        if not all_models:
+            return None
+        # Use first model: (id, name, version, model_type, description, created_at, updated_at)
+        first_model = all_models[0]
+        model = ml_provider.load_ml_model(first_model[1], first_model[2])
+    
+    return model
 
 
 def get_camera_settings(settings_id=None):
@@ -37,7 +69,12 @@ def get_camera_settings(settings_id=None):
 
 
 # Run boulder detection model
-def object_process_image(img2d, model, settings_id=None):
+def object_process_image(img2d, model_id=None, settings_id=None):
+    # Get model from database
+    model = get_model_from_database(model_id)
+    if model is None:
+        raise ValueError("No model found in database")
+    
     # Get settings from database
     settings = get_camera_settings(settings_id)
     min_conf = settings['min_conf']
