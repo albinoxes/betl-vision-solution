@@ -27,8 +27,17 @@ def get_classifier_from_database(classifier_id=None):
     if classifier_model is None:
         return None, None, None
     
-    # Default class names and transform
-    class_names = ['0', '2', '1']
+    # Determine number of classes from model
+    import torch
+    if hasattr(classifier_model, 'fc'):
+        num_classes = classifier_model.fc.out_features
+    else:
+        num_classes = 3  # fallback
+    
+    # Generate class names based on number of classes
+    class_names = [str(i) for i in range(num_classes)]
+    
+    # Default transform
     transform = transforms.Compose([
         transforms.Resize((150, 150)),
         transforms.ToTensor(),

@@ -140,14 +140,27 @@ class MLSQLiteProvider:
         import io
         if category == 'model':
             from ultralytics import YOLO
-            return YOLO(io.BytesIO(data))
+            # YOLO requires a file path, not BytesIO, so save to temp file
+            temp_path = self.get_model_to_temp_file(name, version, suffix='.pt')
+            if temp_path:
+                return YOLO(temp_path)
+            return None
         elif category == 'classifier':
             import torch
             import torchvision.models as models
-            model = models.resnet18(pretrained=False)
-            num_classes = 3
+            
+            # Load state dict to determine number of classes
+            state_dict = torch.load(io.BytesIO(data), weights_only=False)
+            
+            # Get number of classes from the fc layer in state dict
+            if 'fc.weight' in state_dict:
+                num_classes = state_dict['fc.weight'].shape[0]
+            else:
+                num_classes = 3  # fallback default
+            
+            # Create model with correct number of classes
+            model = models.resnet18(weights=None)
             model.fc = torch.nn.Linear(model.fc.in_features, num_classes)
-            state_dict = torch.load(io.BytesIO(data))
             model.load_state_dict(state_dict)
             model.eval()
             return model
