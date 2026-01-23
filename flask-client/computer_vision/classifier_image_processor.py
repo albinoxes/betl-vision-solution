@@ -5,6 +5,8 @@ from sqlite.ml_sqlite_provider import ml_provider
 
 
 def get_classifier_from_database(classifier_id=None):
+    classifier_model = None
+    
     if classifier_id is not None:
         # Parse classifier_id as "name:version"
         if ':' in classifier_id:
@@ -16,11 +18,14 @@ def get_classifier_from_database(classifier_id=None):
     else:
         # Get first available classifier
         all_classifiers = ml_provider.list_classifiers()
-        if not all_classifiers:
-            return None, None, None
-        # Use first classifier: (id, name, version, model_type, description, created_at, updated_at)
-        first_classifier = all_classifiers[0]
-        classifier_model = ml_provider.load_ml_model(first_classifier[1], first_classifier[2])
+        if all_classifiers and len(all_classifiers) > 0:
+            # Use first classifier: (id, name, version, model_type, description, created_at, updated_at)
+            first_classifier = all_classifiers[0]
+            if len(first_classifier) >= 3:
+                classifier_model = ml_provider.load_ml_model(first_classifier[1], first_classifier[2])
+    
+    if classifier_model is None:
+        return None, None, None
     
     # Default class names and transform
     class_names = ['0', '2', '1']

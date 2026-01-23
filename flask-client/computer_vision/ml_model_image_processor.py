@@ -4,6 +4,8 @@ from sqlite.ml_sqlite_provider import ml_provider
 
 
 def get_model_from_database(model_id=None):
+    model = None
+    
     if model_id is not None:
         # Parse model_id as "name:version"
         if ':' in model_id:
@@ -15,32 +17,35 @@ def get_model_from_database(model_id=None):
     else:
         # Get first available model
         all_models = ml_provider.list_models()
-        if not all_models:
-            return None
-        # Use first model: (id, name, version, model_type, description, created_at, updated_at)
-        first_model = all_models[0]
-        model = ml_provider.load_ml_model(first_model[1], first_model[2])
+        if all_models and len(all_models) > 0:
+            # Use first model: (id, name, version, model_type, description, created_at, updated_at)
+            first_model = all_models[0]
+            if len(first_model) >= 3:
+                model = ml_provider.load_ml_model(first_model[1], first_model[2])
     
     return model
 
 
 def get_camera_settings(settings_id=None):
+    settings = None
     if settings_id is not None:
         # Get by name or id - assuming name is used as identifier
         settings = camera_settings_provider.get_settings(settings_id)
     else:
         # Get first available settings
         all_settings = camera_settings_provider.list_settings()
-        if not all_settings:
-            # Return default values if no settings exist
-            return {
-                'min_conf': 0.8,
-                'pixels_per_mm': 1 / (900 / 240),
-                'particle_bb_dimension_factor': 0.9,
-                'est_particle_volume_x': 8.357470139e-11,
-                'est_particle_volume_exp': 3.02511466443
-            }
-        settings = all_settings[0]
+        if all_settings:
+            settings = all_settings[0]
+    
+    # Return default values if no settings found
+    if settings is None:
+        return {
+            'min_conf': 0.8,
+            'pixels_per_mm': 1 / (900 / 240),
+            'particle_bb_dimension_factor': 0.9,
+            'est_particle_volume_x': 8.357470139e-11,
+            'est_particle_volume_exp': 3.02511466443
+        }
     
     # Parse settings tuple: (id, name, min_conf, min_d_detect, min_d_save, particle_bb_dimension_factor, est_particle_volume_x, est_particle_volume_exp, created_at, updated_at)
     pixels_per_mm = 1 / (900 / 240)  # This is calculated, not stored in DB

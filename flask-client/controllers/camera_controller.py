@@ -1,5 +1,9 @@
 from flask import Blueprint, render_template, Response, jsonify, request, redirect, url_for
 import requests
+import cv2
+import numpy as np
+from computer_vision.ml_model_image_processor import object_process_image
+from computer_vision.classifier_image_processor import classifier_process_image
 
 CAMERA_URL = "http://localhost:5001/video"
 
@@ -8,18 +12,107 @@ def generate_frames():
     return Response(r.iter_content(chunk_size=1024),
                     mimetype='multipart/x-mixed-replace; boundary=frame')
 
+def process_video_stream(url, model_id=None, classifier_id=None):
+    """
+    Process video stream from camera server with ML models.
+    
+    Args:
+        url: URL of the video stream
+        model_id: Optional model identifier (name:version)
+        classifier_id: Optional classifier identifier (name:version)
+    """
+    r = requests.get(url, stream=True)
+    boundary = b'--frame'
+    buffer = b''
+    
+    for chunk in r.iter_content(chunk_size=8192):
+        buffer += chunk
+        while boundary in buffer:
+            start = buffer.find(boundary)
+            end = buffer.find(boundary, start + 1)
+            if end == -1:
+                break
+            
+            frame_data = buffer[start:end]
+            buffer = buffer[end:]
+            
+            # Extract JPEG image from frame
+            header_end = frame_data.find(b'\r\n\r\n')
+            if header_end != -1:
+                jpeg_start = header_end + 4
+                jpeg_end = frame_data.find(b'\r\n', jpeg_start)
+                if jpeg_end == -1:
+                    jpeg_data = frame_data[jpeg_start:]
+                else:
+                    jpeg_data = frame_data[jpeg_start:jpeg_end]
+                
+                # Decode JPEG to numpy array
+                nparr = np.frombuffer(jpeg_data, np.uint8)
+                img2d = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+                
+                if img2d is not None:
+                    # Process with ML models if specified
+                    if model_id:
+                        try:
+                            result = object_process_image(img2d.copy(), model_id=model_id)
+                            # Annotate image with detection results
+                            # result format: [image, xyxy, conf, width_px, height_px, width_mm, height_mm, max_d_mm, volume_est]
+                            for i, box in enumerate(result[1]):
+                                cv2.rectangle(img2d, (int(box[0]), int(box[1])), (int(box[2]), int(box[3])), (255, 0, 0), 2)
+                                cv2.putText(img2d, f'{result[7][i]}mm', (int(box[0]), int(box[1]-10)), 
+                                          cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 1)
+                        except Exception as e:
+                            print(f"Error processing with model: {e}")
+                    
+                    if classifier_id:
+                        try:
+                            belt_status = classifier_process_image(img2d.copy(), classifier_id=classifier_id)
+                            cv2.putText(img2d, f'Status: {belt_status}', (10, 30), 
+                                      cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+                        except Exception as e:
+                            print(f"Error processing with classifier: {e}")
+                    
+                    # Re-encode processed image
+                    _, encoded_img = cv2.imencode('.jpg', img2d)
+                    yield (b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' + encoded_img.tobytes() + b'\r\n')
+                else:
+                    # If decode failed, pass through original frame
+                    yield frame_data + b'\r\n'
+    
+    # Yield any remaining buffer
+    if buffer:
+        yield buffer
+
 camera_bp = Blueprint('camera', __name__)
 
 @camera_bp.route('/video')
 def video():
-    return generate_frames()
+    model_param = request.args.get('model')
+    classifier_param = request.args.get('classifier')
+    
+    # If no processing is requested, use simple passthrough
+    if not model_param and not classifier_param:
+        return generate_frames()
+    
+    # Otherwise use processing pipeline
+    return Response(process_video_stream(CAMERA_URL, model_param, classifier_param),
+                   mimetype='multipart/x-mixed-replace; boundary=frame')
 
 @camera_bp.route('/legacy-camera-video/<int:device_id>')
 def legacy_camera_video(device_id):
+    model_param = request.args.get('model')
+    classifier_param = request.args.get('classifier')
     url = f"http://localhost:5002/camera-video/{device_id}"
-    r = requests.get(url, stream=True)
-    return Response(r.iter_content(chunk_size=1024),
-                    mimetype='multipart/x-mixed-replace; boundary=frame')
+    
+    # If no processing is requested, use simple passthrough
+    if not model_param and not classifier_param:
+        r = requests.get(url, stream=True)
+        return Response(r.iter_content(chunk_size=1024),
+                       mimetype='multipart/x-mixed-replace; boundary=frame')
+    
+    # Otherwise use processing pipeline
+    return Response(process_video_stream(url, model_param, classifier_param),
+                   mimetype='multipart/x-mixed-replace; boundary=frame')
 
 @camera_bp.route('/connected-devices')
 def connected_devices():

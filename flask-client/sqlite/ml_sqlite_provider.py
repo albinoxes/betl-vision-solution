@@ -54,7 +54,7 @@ class MLSQLiteProvider:
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute('''
-                SELECT id, name, version, model_type, description, data, created_at, updated_at
+                SELECT id, name, version, model_type, description, data, created_at, updated_at, category
                 FROM ml_models
                 WHERE name = ? AND version = ?
             ''', (name, version))
@@ -62,7 +62,9 @@ class MLSQLiteProvider:
             if row:
                 # Convert timestamps back to datetime objects
                 created_at = datetime.fromisoformat(row[6]) if row[6] else None
-                return (row[0], row[1], row[2], row[3], row[4], row[5], created_at)
+                updated_at = datetime.fromisoformat(row[7]) if row[7] else None
+                # Return: id, name, version, model_type, description, data, created_at, updated_at, category
+                return (row[0], row[1], row[2], row[3], row[4], row[5], created_at, updated_at, row[8])
             return None
 
     def get_model_data(self, name: str, version: str) -> Optional[bytes]:
