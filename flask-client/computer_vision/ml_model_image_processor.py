@@ -4,16 +4,6 @@ from sqlite.ml_sqlite_provider import ml_provider
 
 
 def get_model_from_database(model_id=None):
-    """
-    Get ML model from the database.
-    If model_id is None, returns the first available model.
-    
-    Args:
-        model_id: String in format "name:version" or None for first available model
-    
-    Returns:
-        Loaded model object or None
-    """
     if model_id is not None:
         # Parse model_id as "name:version"
         if ':' in model_id:
@@ -35,10 +25,6 @@ def get_model_from_database(model_id=None):
 
 
 def get_camera_settings(settings_id=None):
-    """
-    Get camera settings from the database.
-    If settings_id is None, returns the first available settings.
-    """
     if settings_id is not None:
         # Get by name or id - assuming name is used as identifier
         settings = camera_settings_provider.get_settings(settings_id)
