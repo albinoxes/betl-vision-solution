@@ -1,7 +1,51 @@
 import cv2
+from sqlite.camera_settings_sqlite_provider import camera_settings_provider
+
+
+def get_camera_settings(settings_id=None):
+    """
+    Get camera settings from the database.
+    If settings_id is None, returns the first available settings.
+    """
+    if settings_id is not None:
+        # Get by name or id - assuming name is used as identifier
+        settings = camera_settings_provider.get_settings(settings_id)
+    else:
+        # Get first available settings
+        all_settings = camera_settings_provider.list_settings()
+        if not all_settings:
+            # Return default values if no settings exist
+            return {
+                'min_conf': 0.8,
+                'pixels_per_mm': 1 / (900 / 240),
+                'particle_bb_dimension_factor': 0.9,
+                'est_particle_volume_x': 8.357470139e-11,
+                'est_particle_volume_exp': 3.02511466443
+            }
+        settings = all_settings[0]
+    
+    # Parse settings tuple: (id, name, min_conf, min_d_detect, min_d_save, particle_bb_dimension_factor, est_particle_volume_x, est_particle_volume_exp, created_at, updated_at)
+    pixels_per_mm = 1 / (900 / 240)  # This is calculated, not stored in DB
+    
+    return {
+        'min_conf': settings[2],
+        'pixels_per_mm': pixels_per_mm,
+        'particle_bb_dimension_factor': settings[5],
+        'est_particle_volume_x': settings[6],
+        'est_particle_volume_exp': settings[7]
+    }
+
 
 # Run boulder detection model
-def object_process_image(img2d, model, min_conf, pixels_per_mm, particle_bb_dimension_factor, est_particle_volume_x, est_particle_volume_exp):
+def object_process_image(img2d, model, settings_id=None):
+    # Get settings from database
+    settings = get_camera_settings(settings_id)
+    min_conf = settings['min_conf']
+    pixels_per_mm = settings['pixels_per_mm']
+    particle_bb_dimension_factor = settings['particle_bb_dimension_factor']
+    est_particle_volume_x = settings['est_particle_volume_x']
+    est_particle_volume_exp = settings['est_particle_volume_exp']
+    
     # Convert RGBA image to RGB
     img2d = cv2.cvtColor(img2d, cv2.COLOR_RGBA2RGB)
     
