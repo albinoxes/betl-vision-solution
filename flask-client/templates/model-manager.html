@@ -1,9 +1,10 @@
-<!DOCTYPE html>
-<html>
-<head>
-    <title>ML Model Manager</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/buttons.css') }}">
-    <style>
+{% extends "base.html" %}
+
+{% block title %}Belt Vision - Models & Classifiers{% endblock %}
+{% block nav_models %}active{% endblock %}
+
+{% block additional_css %}
+<style>
         table {
             border-collapse: collapse;
             width: 100%;
@@ -38,9 +39,10 @@
             background-color: #45a049;
         }
     </style>
-</head>
-<body>
-    <h1>ML Model and Classifier Manager</h1>
+{% endblock %}
+
+{% block content %}
+<h1>ML Model and Classifier Manager</h1>
 
     <button id="addModelBtn" class="btn" type="button">Add a new model or classifier</button><br/><br/>
 
@@ -166,7 +168,9 @@
 
     <br>
     <button onclick="window.location.href='{{ url_for('participants.index') }}'">Back to Home</button>
+{% endblock %}
 
+{% block additional_scripts %}
     <script>
         document.getElementById('addModelBtn').addEventListener('click', function() {
             const form = document.getElementById('uploadForm');
@@ -227,5 +231,4 @@
             }
         });
     </script>
-</body>
-</html>
+{% endblock %}

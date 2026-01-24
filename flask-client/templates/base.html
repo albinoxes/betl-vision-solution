@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>{% block title %}Belt Vision App{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/base.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/buttons.css') }}">
+    {% block additional_css %}{% endblock %}
+</head>
+<body>
+    <!-- Navigation Panel -->
+    <nav class="nav-panel">
+        <div class="nav-container">
+            <div class="nav-brand">Belt Vision</div>
+            <ul class="nav-links">
+                <li><a href="{{ url_for('participants.index') }}" class="{% block nav_home %}{% endblock %}">Home</a></li>
+                <li><a href="{{ url_for('camera.camera_manager') }}" class="{% block nav_camera %}{% endblock %}">Camera Manager</a></li>
+                <li><a href="{{ url_for('ml.model_manager') }}" class="{% block nav_models %}{% endblock %}">Models & Classifiers</a></li>
+                <li><a href="{{ url_for('participants.participants') }}" class="{% block nav_participants %}{% endblock %}">Participants</a></li>
+                <li><a href="{{ url_for('participants.join') }}" class="{% block nav_join %}{% endblock %}">Join</a></li>
+            </ul>
+        </div>
+    </nav>
+
+    <!-- Main Content -->
+    <div class="content-container">
+        {% block content %}{% endblock %}
+    </div>
+
+    {% block additional_scripts %}{% endblock %}
+</body>
+</html>
