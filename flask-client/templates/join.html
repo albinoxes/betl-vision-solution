@@ -1,8 +1,9 @@
-<!DOCTYPE html>
-<html>
-    <head>
-        <title>Flask and SQLite </title>
-    </head>
+{% extends "base.html" %}
+
+{% block title %}Belt Vision - Join{% endblock %}
+{% block nav_join %}active{% endblock %}
+
+{% block content %}
     <body>
         <form method="POST">
             <label>Enter Name:</label>
@@ -18,4 +19,4 @@
             <input type = "submit" value = "submit"/><br/>
         </form>
     </body>
-</html>
+{% endblock %}

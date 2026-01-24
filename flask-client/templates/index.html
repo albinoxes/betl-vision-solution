@@ -1,63 +1,61 @@
-<!DOCTYPE html>
-<html>
-    <head>
-        <title>Belt Vision App</title>
-    </head>
-    <body>
-        <h1>Belt Vision Board</h1>
-        <button class="btn" type="button" onclick="window.location.href='{{ url_for('camera.camera_manager') }}';">Go to the camera-manager</button><br/>
-        <button class="btn" type="button" onclick="window.location.href='{{ url_for('ml.model_manager') }}';">Manage ML Models</button><br/>
-        <button class="btn" type="button" onclick="window.location.href='{{ url_for('participants.join') }}';">Fill form to get updates</button><br/>
-        <button class="btn" type="button" onclick="window.location.href='{{ url_for('participants.participants') }}';">Check participant list</button><br/>
+{% extends "base.html" %}
 
-        <button id="toggleVideo" class="btn" type="button">Start Webcam Video</button><br/>
-        <img id="webcamVideoFeed" width="640" style="display:none" alt="Video feed will appear here"><br/>
+{% block title %}Belt Vision - Home{% endblock %}
+{% block nav_home %}active{% endblock %}
 
-        <script>
-            (function(){
-                const btn = document.getElementById('toggleVideo');
-                const img = document.getElementById('webcamVideoFeed');
-                let running = false;
+{% block content %}
+<h1>Belt Vision Board</h1>
 
-                btn.addEventListener('click', function(){
-                    if (!running) {
-                        img.src = '/video';
-                        img.style.display = 'block';
-                        btn.textContent = 'Stop Video';
-                        running = true;
-                    } else {
-                        img.removeAttribute('src');
-                        img.style.display = 'none';
-                        btn.textContent = 'Start Video';
-                        running = false;
-                    }
-                });
-            })();
-        </script>
+<h2>Quick Video Tests</h2>
+<button id="toggleVideo" class="btn" type="button">Start Webcam Video</button><br/>
+<img id="webcamVideoFeed" width="640" style="display:none" alt="Video feed will appear here"><br/>
 
-        <button id="toggleLegacyVideo" class="btn" type="button">Start Legacy Camera Video</button><br/>
-        <img id="legacyVideoFeed" width="640" style="display:none" alt="Video feed will appear here">
+<button id="toggleLegacyVideo" class="btn" type="button">Start Legacy Camera Video</button><br/>
+<img id="legacyVideoFeed" width="640" style="display:none" alt="Video feed will appear here">
+{% endblock %}
 
-                <script>
-            (function(){
-                const btn = document.getElementById('toggleLegacyVideo');
-                const img = document.getElementById('legacyVideoFeed');
-                let running = false;
+{% block additional_scripts %}
+<script>
+    (function(){
+        const btn = document.getElementById('toggleVideo');
+        const img = document.getElementById('webcamVideoFeed');
+        let running = false;
 
-                btn.addEventListener('click', function(){
-                    if (!running) {
-                        img.src = '/legacy-camera-video';
-                        img.style.display = 'block';
-                        btn.textContent = 'Stop Legacy Camera Video';
-                        running = true;
-                    } else {
-                        img.removeAttribute('src');
-                        img.style.display = 'none';
-                        btn.textContent = 'Start Legacy Camera Video';
-                        running = false;
-                    }
-                });
-            })();
-        </script>
-    </body>
-</html>
+        btn.addEventListener('click', function(){
+            if (!running) {
+                img.src = '/video';
+                img.style.display = 'block';
+                btn.textContent = 'Stop Video';
+                running = true;
+            } else {
+                img.removeAttribute('src');
+                img.style.display = 'none';
+                btn.textContent = 'Start Video';
+                running = false;
+            }
+        });
+    })();
+</script>
+
+<script>
+    (function(){
+        const btn = document.getElementById('toggleLegacyVideo');
+        const img = document.getElementById('legacyVideoFeed');
+        let running = false;
+
+        btn.addEventListener('click', function(){
+            if (!running) {
+                img.src = '/legacy-camera-video';
+                img.style.display = 'block';
+                btn.textContent = 'Stop Legacy Camera Video';
+                running = true;
+            } else {
+                img.removeAttribute('src');
+                img.style.display = 'none';
+                btn.textContent = 'Start Legacy Camera Video';
+                running = false;
+            }
+        });
+    })();
+</script>
+{% endblock %}

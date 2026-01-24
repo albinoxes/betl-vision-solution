@@ -1,0 +1,79 @@
+/* Button Styles */
+.btn {
+    position: relative;
+    padding: 12px 50px;
+    background-color: #A52A2A;
+    color: white;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 18px;
+    font-weight: 500;
+    transition: background-color 0.3s ease, transform 0.1s ease;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+    margin: 5px;
+    font-family: Arial, sans-serif;
+}
+
+.btn::before,
+.btn::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 20px;
+    height: 20px;
+    border: 2px dashed rgba(255, 255, 255, 0.6);
+    border-radius: 3px;
+}
+
+.btn::before {
+    left: 15px;
+}
+
+.btn::after {
+    right: 15px;
+}
+
+.btn:hover {
+    background-color: #8B2323;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
+}
+
+.btn:active {
+    transform: translateY(0);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+.btn:focus {
+    outline: 2px solid rgba(165, 42, 42, 0.5);
+    outline-offset: 2px;
+}
+
+/* Primary Button Variant */
+.btn-primary {
+    background-color: #4CAF50;
+}
+
+.btn-primary:hover {
+    background-color: #45a049;
+}
+
+/* Secondary Button Variant */
+.btn-secondary {
+    background-color: #6c757d;
+}
+
+.btn-secondary:hover {
+    background-color: #5a6268;
+}
+
+/* Destructive/Danger Button (default btn style) */
+.btn-danger {
+    background-color: #A52A2A;
+}
+
+.btn-danger:hover {
+    background-color: #8B2323;
+}

@@ -1,13 +1,17 @@
-<!DOCTYPE html>
-<html>
-    <head>
-        <title>Flask and SQLite </title>
-    </head>
-    <style>
+{% extends "base.html" %}
+
+{% block title %}Belt Vision - Participants{% endblock %}
+{% block nav_participants %}active{% endblock %}
+
+{% block additional_css %}
+<style>
         table, th, td {
           border:1px solid black;
         }
         </style>
+{% endblock %}
+
+{% block content %}
     <body>
         <table style="width:100%">
             <tr>
@@ -28,4 +32,4 @@
             {%endfor%}
           </table>          
     </body>
-</html>
+{% endblock %}
