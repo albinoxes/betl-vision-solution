@@ -2,6 +2,7 @@
 <html>
     <head>
         <title>Belt Vision Camera Manager</title>
+        <link rel="stylesheet" href="{{ url_for('static', filename='css/buttons.css') }}">
         <script>
             async function loadDevices() {
                 const response = await fetch('/connected-devices');
