@@ -190,27 +190,58 @@
     }
     
     function viewStream(type, id, btn) {
-        const row = btn.closest('tr');
-        const selects = row.querySelectorAll('select');
-        const modelValue = selects[0].value;
-        const classifierValue = selects[1].value;
-        const settingsValue = selects[2].value;
-        let url;
-        if (type === 'legacy') {
-            url = `/legacy-camera-video/${id}`;
-        } else if (type === 'simulator') {
-            url = '/simulator-video';
-        } else {
-            url = '/video';
-        }
-        const params = [];
-        if (modelValue) params.push(`model=${encodeURIComponent(modelValue)}`);
-        if (classifierValue) params.push(`classifier=${encodeURIComponent(classifierValue)}`);
-        if (settingsValue) params.push(`settings=${encodeURIComponent(settingsValue)}`);
-        if (params.length) url += '?' + params.join('&');
+        const videoContainer = document.getElementById('videoContainer');
         const videoFeed = document.getElementById('videoFeed');
-        videoFeed.src = url;
-        document.getElementById('videoContainer').style.display = 'block';
+        
+        // Check if video is currently playing
+        if (btn.textContent === 'Stop Stream') {
+            // Stop the stream
+            videoFeed.src = '';
+            videoContainer.style.display = 'none';
+            btn.textContent = 'View Stream';
+            btn.style.backgroundColor = '';
+            
+            // Reset all other view stream buttons
+            document.querySelectorAll('button').forEach(b => {
+                if (b.textContent === 'Stop Stream' && b !== btn) {
+                    b.textContent = 'View Stream';
+                    b.style.backgroundColor = '';
+                }
+            });
+        } else {
+            // Start the stream
+            const row = btn.closest('tr');
+            const selects = row.querySelectorAll('select');
+            const modelValue = selects[0].value;
+            const classifierValue = selects[1].value;
+            const settingsValue = selects[2].value;
+            let url;
+            if (type === 'legacy') {
+                url = `/legacy-camera-video/${id}`;
+            } else if (type === 'simulator') {
+                url = '/simulator-video';
+            } else {
+                url = '/video';
+            }
+            const params = [];
+            if (modelValue) params.push(`model=${encodeURIComponent(modelValue)}`);
+            if (classifierValue) params.push(`classifier=${encodeURIComponent(classifierValue)}`);
+            if (settingsValue) params.push(`settings=${encodeURIComponent(settingsValue)}`);
+            if (params.length) url += '?' + params.join('&');
+            
+            // Reset all other view stream buttons
+            document.querySelectorAll('button').forEach(b => {
+                if (b.textContent === 'Stop Stream') {
+                    b.textContent = 'View Stream';
+                    b.style.backgroundColor = '';
+                }
+            });
+            
+            videoFeed.src = url;
+            videoContainer.style.display = 'block';
+            btn.textContent = 'Stop Stream';
+            btn.style.backgroundColor = '#4444ff';
+        }
     }
     
     window.onload = function() {
