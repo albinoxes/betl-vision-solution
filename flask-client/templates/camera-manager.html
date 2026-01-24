@@ -8,20 +8,29 @@
                 const devices = await response.json();
                 const tableBody = document.getElementById('deviceTableBody');
                 tableBody.innerHTML = '';
+                
+                // Get defaults from localStorage
+                const defaultModel = localStorage.getItem('defaultModel') || '';
+                const defaultClassifier = localStorage.getItem('defaultClassifier') || '';
+                
                 devices.forEach(device => {
                     const row = document.createElement('tr');
                     
                     // Build model select
                     let modelOptions = '<option value="">Select Model</option>';
                     window.models.forEach(model => {
-                        modelOptions += `<option value="${model[1]}:${model[2]}">${model[1]} (${model[2]})</option>`;
+                        const modelId = `${model[1]}:${model[2]}`;
+                        const selected = modelId === defaultModel ? 'selected' : '';
+                        modelOptions += `<option value="${modelId}" ${selected}>${model[1]} (${model[2]})</option>`;
                     });
                     const modelSelect = `<select>${modelOptions}</select>`;
                     
                     // Build classifier select
                     let classifierOptions = '<option value="">Select Classifier</option>';
                     window.classifiers.forEach(classifier => {
-                        classifierOptions += `<option value="${classifier[1]}:${classifier[2]}">${classifier[1]} (${classifier[2]})</option>`;
+                        const classifierId = `${classifier[1]}:${classifier[2]}`;
+                        const selected = classifierId === defaultClassifier ? 'selected' : '';
+                        classifierOptions += `<option value="${classifierId}" ${selected}>${classifier[1]} (${classifier[2]})</option>`;
                     });
                     const classifierSelect = `<select>${classifierOptions}</select>`;
                     
