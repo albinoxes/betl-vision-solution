@@ -12,11 +12,8 @@
         <div class="nav-container">
             <div class="nav-brand">Belt Vision</div>
             <ul class="nav-links">
-                <li><a href="{{ url_for('participants.index') }}" class="{% block nav_home %}{% endblock %}">Home</a></li>
                 <li><a href="{{ url_for('camera.camera_manager') }}" class="{% block nav_camera %}{% endblock %}">Camera Manager</a></li>
                 <li><a href="{{ url_for('ml.model_manager') }}" class="{% block nav_models %}{% endblock %}">Models & Classifiers</a></li>
-                <li><a href="{{ url_for('participants.participants') }}" class="{% block nav_participants %}{% endblock %}">Participants</a></li>
-                <li><a href="{{ url_for('participants.join') }}" class="{% block nav_join %}{% endblock %}">Join</a></li>
             </ul>
         </div>
     </nav>
