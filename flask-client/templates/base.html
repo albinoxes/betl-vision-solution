@@ -12,6 +12,7 @@
         <div class="nav-container">
             <div class="nav-brand">Belt Vision</div>
             <ul class="nav-links">
+                <li><a href="/" class="{% block nav_home %}{% endblock %}">Home</a></li>
                 <li><a href="{{ url_for('camera.camera_manager') }}" class="{% block nav_camera %}{% endblock %}">Camera Manager</a></li>
                 <li><a href="{{ url_for('ml.model_manager') }}" class="{% block nav_models %}{% endblock %}">Models & Classifiers</a></li>
             </ul>
