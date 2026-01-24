@@ -20,3 +20,8 @@
     - pip install flask
     - pip install "numpy<2.0"
     - pip install Pillow
+
+4) simulator-server:
+    - python3.12 -m venv simulator_env
+    - .\simulator_env\Scripts\Activate.ps1
+    - pip install opencv-python, flask

@@ -193,7 +193,14 @@
         const modelValue = selects[0].value;
         const classifierValue = selects[1].value;
         const settingsValue = selects[2].value;
-        let url = type === 'legacy' ? `/legacy-camera-video/${id}` : '/video';
+        let url;
+        if (type === 'legacy') {
+            url = `/legacy-camera-video/${id}`;
+        } else if (type === 'simulator') {
+            url = '/simulator-video';
+        } else {
+            url = '/video';
+        }
         const params = [];
         if (modelValue) params.push(`model=${encodeURIComponent(modelValue)}`);
         if (classifierValue) params.push(`classifier=${encodeURIComponent(classifierValue)}`);
