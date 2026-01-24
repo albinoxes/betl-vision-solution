@@ -21,6 +21,17 @@ def process_video_stream(url, model_id=None, classifier_id=None):
         model_id: Optional model identifier (name:version)
         classifier_id: Optional classifier identifier (name:version)
     """
+    # Load model and settings once before processing stream to avoid repeated database calls
+    model = None
+    settings = None
+    if model_id:
+        from computer_vision.ml_model_image_processor import get_model_from_database, get_camera_settings
+        try:
+            model = get_model_from_database(model_id)
+            settings = get_camera_settings()  # Get default or first available settings
+        except Exception as e:
+            print(f"Error loading model or settings: {e}")
+    
     r = requests.get(url, stream=True)
     boundary = b'--frame'
     buffer = b''
@@ -52,14 +63,15 @@ def process_video_stream(url, model_id=None, classifier_id=None):
                 
                 if img2d is not None:
                     # Process with ML models if specified
-                    if model_id:
+                    if model is not None:
                         try:
-                            result = object_process_image(img2d.copy(), model_id=model_id)
+                            result = object_process_image(img2d.copy(), model=model, settings=settings)
                             # Annotate image with detection results
-                            # result format: [image, xyxy, conf, width_px, height_px, width_mm, height_mm, max_d_mm, volume_est]
+                            # result format: [image, xyxy, particles]
+                            particles = result[2]
                             for i, box in enumerate(result[1]):
                                 cv2.rectangle(img2d, (int(box[0]), int(box[1])), (int(box[2]), int(box[3])), (255, 0, 0), 2)
-                                cv2.putText(img2d, f'{result[7][i]}mm', (int(box[0]), int(box[1]-10)), 
+                                cv2.putText(img2d, f'{particles[i].max_d_mm}mm', (int(box[0]), int(box[1]-10)), 
                                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 1)
                         except Exception as e:
                             print(f"Error processing with model: {e}")

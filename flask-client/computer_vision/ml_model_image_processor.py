@@ -97,14 +97,16 @@ def get_camera_settings(settings_id=None):
 
 
 # Run boulder detection model
-def object_process_image(img2d, model_id=None, settings_id=None):
-    # Get model from database
-    model = get_model_from_database(model_id)
+def object_process_image(img2d, model=None, model_id=None, settings=None, settings_id=None):
+    # Get model from database if not provided
     if model is None:
-        raise ValueError("No model found in database")
+        model = get_model_from_database(model_id)
+        if model is None:
+            raise ValueError("No model found in database")
     
-    # Get settings from database
-    settings = get_camera_settings(settings_id)
+    # Get settings from database if not provided
+    if settings is None:
+        settings = get_camera_settings(settings_id)
     
     # Convert RGBA image to RGB
     img2d = cv2.cvtColor(img2d, cv2.COLOR_RGBA2RGB)
