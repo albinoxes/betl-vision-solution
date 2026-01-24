@@ -25,6 +25,13 @@
                     });
                     const classifierSelect = `<select>${classifierOptions}</select>`;
                     
+                    // Build settings select
+                    let settingsOptions = '<option value="">Default Settings</option>';
+                    window.settings.forEach(setting => {
+                        settingsOptions += `<option value="${setting[1]}">${setting[1]}</option>`;
+                    });
+                    const settingsSelect = `<select>${settingsOptions}</select>`;
+                    
                     row.innerHTML = `
                         <td>${device.type}</td>
                         <td>${device.id}</td>
@@ -33,6 +40,7 @@
                         <td>${device.status}</td>
                         <td>${modelSelect}</td>
                         <td>${classifierSelect}</td>
+                        <td>${settingsSelect}</td>
                         <td><button onclick="viewStream('${device.type}', ${device.id}, this)">View Stream</button></td>
                     `;
                     tableBody.appendChild(row);
@@ -43,10 +51,12 @@
                 const selects = row.querySelectorAll('select');
                 const modelValue = selects[0].value;
                 const classifierValue = selects[1].value;
+                const settingsValue = selects[2].value;
                 let url = type === 'legacy' ? `/legacy-camera-video/${id}` : '/video';
                 const params = [];
                 if (modelValue) params.push(`model=${encodeURIComponent(modelValue)}`);
                 if (classifierValue) params.push(`classifier=${encodeURIComponent(classifierValue)}`);
+                if (settingsValue) params.push(`settings=${encodeURIComponent(settingsValue)}`);
                 if (params.length) url += '?' + params.join('&');
                 const videoFeed = document.getElementById('videoFeed');
                 videoFeed.src = url;
@@ -98,6 +108,7 @@
                     <th>Status</th>
                     <th>ML Model</th>
                     <th>Classifier</th>
+                    <th>Settings</th>
                     <th>Action</th>
                 </tr>
             </thead>

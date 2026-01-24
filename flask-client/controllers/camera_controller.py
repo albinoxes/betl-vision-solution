@@ -12,7 +12,7 @@ def generate_frames():
     return Response(r.iter_content(chunk_size=1024),
                     mimetype='multipart/x-mixed-replace; boundary=frame')
 
-def process_video_stream(url, model_id=None, classifier_id=None):
+def process_video_stream(url, model_id=None, classifier_id=None, settings_id=None):
     """
     Process video stream from camera server with ML models.
     
@@ -20,7 +20,19 @@ def process_video_stream(url, model_id=None, classifier_id=None):
         url: URL of the video stream
         model_id: Optional model identifier (name:version)
         classifier_id: Optional classifier identifier (name:version)
+        settings_id: Optional settings identifier (name)
     """
+    # Load model and settings once before processing stream to avoid repeated database calls
+    model = None
+    settings = None
+    if model_id:
+        from computer_vision.ml_model_image_processor import get_model_from_database, get_camera_settings
+        try:
+            model = get_model_from_database(model_id)
+            settings = get_camera_settings(settings_id)  # Use specified settings or default
+        except Exception as e:
+            print(f"Error loading model or settings: {e}")
+    
     r = requests.get(url, stream=True)
     boundary = b'--frame'
     buffer = b''
@@ -52,14 +64,15 @@ def process_video_stream(url, model_id=None, classifier_id=None):
                 
                 if img2d is not None:
                     # Process with ML models if specified
-                    if model_id:
+                    if model is not None:
                         try:
-                            result = object_process_image(img2d.copy(), model_id=model_id)
+                            result = object_process_image(img2d.copy(), model=model, settings=settings)
                             # Annotate image with detection results
-                            # result format: [image, xyxy, conf, width_px, height_px, width_mm, height_mm, max_d_mm, volume_est]
+                            # result format: [image, xyxy, particles]
+                            particles = result[2]
                             for i, box in enumerate(result[1]):
                                 cv2.rectangle(img2d, (int(box[0]), int(box[1])), (int(box[2]), int(box[3])), (255, 0, 0), 2)
-                                cv2.putText(img2d, f'{result[7][i]}mm', (int(box[0]), int(box[1]-10)), 
+                                cv2.putText(img2d, f'{particles[i].max_d_mm}mm', (int(box[0]), int(box[1]-10)), 
                                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 1)
                         except Exception as e:
                             print(f"Error processing with model: {e}")
@@ -89,19 +102,21 @@ camera_bp = Blueprint('camera', __name__)
 def video():
     model_param = request.args.get('model')
     classifier_param = request.args.get('classifier')
+    settings_param = request.args.get('settings')
     
     # If no processing is requested, use simple passthrough
     if not model_param and not classifier_param:
         return generate_frames()
     
     # Otherwise use processing pipeline
-    return Response(process_video_stream(CAMERA_URL, model_param, classifier_param),
+    return Response(process_video_stream(CAMERA_URL, model_param, classifier_param, settings_param),
                    mimetype='multipart/x-mixed-replace; boundary=frame')
 
 @camera_bp.route('/legacy-camera-video/<int:device_id>')
 def legacy_camera_video(device_id):
     model_param = request.args.get('model')
     classifier_param = request.args.get('classifier')
+    settings_param = request.args.get('settings')
     url = f"http://localhost:5002/camera-video/{device_id}"
     
     # If no processing is requested, use simple passthrough
@@ -111,7 +126,7 @@ def legacy_camera_video(device_id):
                        mimetype='multipart/x-mixed-replace; boundary=frame')
     
     # Otherwise use processing pipeline
-    return Response(process_video_stream(url, model_param, classifier_param),
+    return Response(process_video_stream(url, model_param, classifier_param, settings_param),
                    mimetype='multipart/x-mixed-replace; boundary=frame')
 
 @camera_bp.route('/connected-devices')
