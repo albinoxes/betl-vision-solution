@@ -129,6 +129,23 @@ def legacy_camera_video(device_id):
     return Response(process_video_stream(url, model_param, classifier_param, settings_param),
                    mimetype='multipart/x-mixed-replace; boundary=frame')
 
+@camera_bp.route('/simulator-video')
+def simulator_video():
+    model_param = request.args.get('model')
+    classifier_param = request.args.get('classifier')
+    settings_param = request.args.get('settings')
+    url = "http://localhost:5003/video/simulator"
+    
+    # If no processing is requested, use simple passthrough
+    if not model_param and not classifier_param:
+        r = requests.get(url, stream=True)
+        return Response(r.iter_content(chunk_size=1024),
+                       mimetype='multipart/x-mixed-replace; boundary=frame')
+    
+    # Otherwise use processing pipeline
+    return Response(process_video_stream(url, model_param, classifier_param, settings_param),
+                   mimetype='multipart/x-mixed-replace; boundary=frame')
+
 @camera_bp.route('/connected-devices')
 def connected_devices():
     devices = []
@@ -163,6 +180,22 @@ def connected_devices():
                 })
     except:
         pass
+
+    try:
+        # Query simulator-server
+        simulator_response = requests.get('http://localhost:5003/devices', timeout=5)
+        if simulator_response.status_code == 200:
+            simulator_devices = simulator_response.json()
+            for dev in simulator_devices:
+                devices.append({
+                    'type': 'simulator',
+                    'id': dev['id'],
+                    'info': dev['info'],
+                    'ip': 'localhost',
+                    'status': dev['status']
+                })
+    except Exception as e:
+        print(f"Simulator server not available: {e}")
 
     return jsonify(devices)
 
