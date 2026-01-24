@@ -4,94 +4,39 @@ import cv2
 import numpy as np
 from computer_vision.ml_model_image_processor import object_process_image
 from computer_vision.classifier_image_processor import classifier_process_image
-import torch
-import torchvision.transforms as transforms
 
 CAMERA_URL = "http://localhost:5001/video"
 
-# Constants for processing
-min_conf = 0.8
-pixels_per_mm = 1 / (900 / 240)
-particle_bb_dimension_factor = 0.9
-est_particle_volume_x = 0.00000000008357470139
-est_particle_volume_exp = 3.02511466443
-class_names = ['0', '2', '1']
-transform = transforms.Compose([transforms.Resize((150, 150)),
-                                transforms.ToTensor(),
-                                transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
-
-def generate_frames(model_param=None, classifier_param=None):
-    ml_model = None
-    classifier_model = None
-    if model_param:
-        name, version = model_param.split(':', 1) if ':' in model_param else (model_param, '1.0.0')
-        from sqlite.ml_sqlite_provider import ml_provider
-        ml_model = ml_provider.load_ml_model(name, version)
-    if classifier_param:
-        name, version = classifier_param.split(':', 1) if ':' in classifier_param else (classifier_param, '1.0.0')
-        if not 'ml_provider' in locals():
-            from sqlite.ml_sqlite_provider import ml_provider
-        classifier_model = ml_provider.load_ml_model(name, version)
-    
+def generate_frames():
     r = requests.get(CAMERA_URL, stream=True)
-    boundary = b'--frame'
-    buffer = b''
-    for chunk in r.iter_content(chunk_size=8192):
-        buffer += chunk
-        while boundary in buffer:
-            start = buffer.find(boundary)
-            end = buffer.find(boundary, start + 1)
-            if end == -1:
-                break
-            frame_data = buffer[start:end]
-            buffer = buffer[end:]
-            # extract jpeg
-            header_end = frame_data.find(b'\r\n\r\n')
-            if header_end != -1:
-                jpeg_start = header_end + 4
-                jpeg_end = frame_data.find(b'\r\n', jpeg_start)
-                if jpeg_end == -1:
-                    jpeg_data = frame_data[jpeg_start:]
-                else:
-                    jpeg_data = frame_data[jpeg_start:jpeg_end]
-                # decode
-                nparr = np.frombuffer(jpeg_data, np.uint8)
-                img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-                if img is not None:
-                    # process
-                    if ml_model:
-                        result = object_process_image(img.copy(), ml_model, min_conf, pixels_per_mm, particle_bb_dimension_factor, est_particle_volume_x, est_particle_volume_exp)
-                        # annotate
-                        for i, box in enumerate(result[1]):
-                            cv2.rectangle(img, (int(box[0]), int(box[1])), (int(box[2]), int(box[3])), (255, 0, 0), 2)
-                            cv2.putText(img, f'{result[7][i]}mm', (int(box[0]), int(box[1]-10)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,0,0), 1)
-                    if classifier_model:
-                        belt_status = classifier_process_image(img.copy(), classifier_model, class_names, transform)
-                        cv2.putText(img, f'Status: {belt_status}', (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0,255,0), 2)
-                    # re-encode
-                    _, encoded_img = cv2.imencode('.jpg', img)
-                    yield (b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' + encoded_img.tobytes() + b'\r\n')
-                else:
-                    yield frame_data + b'\r\n'
-    if buffer:
-        yield buffer
+    return Response(r.iter_content(chunk_size=1024),
+                    mimetype='multipart/x-mixed-replace; boundary=frame')
 
-def generate_legacy_frames(url, model_param=None, classifier_param=None):
-    ml_model = None
-    classifier_model = None
-    if model_param:
-        name, version = model_param.split(':', 1) if ':' in model_param else (model_param, '1.0.0')
-        from sqlite.ml_sqlite_provider import ml_provider
-        ml_model = ml_provider.load_ml_model(name, version)
-    if classifier_param:
-        name, version = classifier_param.split(':', 1) if ':' in classifier_param else (classifier_param, '1.0.0')
-        if not 'ml_provider' in locals():
-            from sqlite.ml_sqlite_provider import ml_provider
-        classifier_model = ml_provider.load_ml_model(name, version)
+def process_video_stream(url, model_id=None, classifier_id=None, settings_id=None):
+    """
+    Process video stream from camera server with ML models.
+    
+    Args:
+        url: URL of the video stream
+        model_id: Optional model identifier (name:version)
+        classifier_id: Optional classifier identifier (name:version)
+        settings_id: Optional settings identifier (name)
+    """
+    # Load model and settings once before processing stream to avoid repeated database calls
+    model = None
+    settings = None
+    if model_id:
+        from computer_vision.ml_model_image_processor import get_model_from_database, get_camera_settings
+        try:
+            model = get_model_from_database(model_id)
+            settings = get_camera_settings(settings_id)  # Use specified settings or default
+        except Exception as e:
+            print(f"Error loading model or settings: {e}")
     
     r = requests.get(url, stream=True)
     boundary = b'--frame'
     buffer = b''
+    
     for chunk in r.iter_content(chunk_size=8192):
         buffer += chunk
         while boundary in buffer:
@@ -99,9 +44,11 @@ def generate_legacy_frames(url, model_param=None, classifier_param=None):
             end = buffer.find(boundary, start + 1)
             if end == -1:
                 break
+            
             frame_data = buffer[start:end]
             buffer = buffer[end:]
-            # extract jpeg
+            
+            # Extract JPEG image from frame
             header_end = frame_data.find(b'\r\n\r\n')
             if header_end != -1:
                 jpeg_start = header_end + 4
@@ -110,25 +57,42 @@ def generate_legacy_frames(url, model_param=None, classifier_param=None):
                     jpeg_data = frame_data[jpeg_start:]
                 else:
                     jpeg_data = frame_data[jpeg_start:jpeg_end]
-                # decode
+                
+                # Decode JPEG to numpy array
                 nparr = np.frombuffer(jpeg_data, np.uint8)
-                img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-                if img is not None:
-                    # process
-                    if ml_model:
-                        result = object_process_image(img.copy(), ml_model, min_conf, pixels_per_mm, particle_bb_dimension_factor, est_particle_volume_x, est_particle_volume_exp)
-                        # annotate
-                        for i, box in enumerate(result[1]):
-                            cv2.rectangle(img, (int(box[0]), int(box[1])), (int(box[2]), int(box[3])), (255, 0, 0), 2)
-                            cv2.putText(img, f'{result[7][i]}mm', (int(box[0]), int(box[1]-10)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,0,0), 1)
-                    if classifier_model:
-                        belt_status = classifier_process_image(img.copy(), classifier_model, class_names, transform)
-                        cv2.putText(img, f'Status: {belt_status}', (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0,255,0), 2)
-                    # re-encode
-                    _, encoded_img = cv2.imencode('.jpg', img)
+                img2d = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+                
+                if img2d is not None:
+                    # Process with ML models if specified
+                    if model is not None:
+                        try:
+                            result = object_process_image(img2d.copy(), model=model, settings=settings)
+                            # Annotate image with detection results
+                            # result format: [image, xyxy, particles]
+                            particles = result[2]
+                            for i, box in enumerate(result[1]):
+                                cv2.rectangle(img2d, (int(box[0]), int(box[1])), (int(box[2]), int(box[3])), (255, 0, 0), 2)
+                                cv2.putText(img2d, f'{particles[i].max_d_mm}mm', (int(box[0]), int(box[1]-10)), 
+                                          cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 1)
+                        except Exception as e:
+                            print(f"Error processing with model: {e}")
+                    
+                    if classifier_id:
+                        try:
+                            belt_status = classifier_process_image(img2d.copy(), classifier_id=classifier_id)
+                            cv2.putText(img2d, f'Status: {belt_status}', (10, 30), 
+                                      cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+                        except Exception as e:
+                            print(f"Error processing with classifier: {e}")
+                    
+                    # Re-encode processed image
+                    _, encoded_img = cv2.imencode('.jpg', img2d)
                     yield (b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' + encoded_img.tobytes() + b'\r\n')
                 else:
+                    # If decode failed, pass through original frame
                     yield frame_data + b'\r\n'
+    
+    # Yield any remaining buffer
     if buffer:
         yield buffer
 
@@ -138,14 +102,32 @@ camera_bp = Blueprint('camera', __name__)
 def video():
     model_param = request.args.get('model')
     classifier_param = request.args.get('classifier')
-    return generate_frames(model_param, classifier_param)
+    settings_param = request.args.get('settings')
+    
+    # If no processing is requested, use simple passthrough
+    if not model_param and not classifier_param:
+        return generate_frames()
+    
+    # Otherwise use processing pipeline
+    return Response(process_video_stream(CAMERA_URL, model_param, classifier_param, settings_param),
+                   mimetype='multipart/x-mixed-replace; boundary=frame')
 
 @camera_bp.route('/legacy-camera-video/<int:device_id>')
 def legacy_camera_video(device_id):
     model_param = request.args.get('model')
     classifier_param = request.args.get('classifier')
+    settings_param = request.args.get('settings')
     url = f"http://localhost:5002/camera-video/{device_id}"
-    return generate_legacy_frames(url, model_param, classifier_param)
+    
+    # If no processing is requested, use simple passthrough
+    if not model_param and not classifier_param:
+        r = requests.get(url, stream=True)
+        return Response(r.iter_content(chunk_size=1024),
+                       mimetype='multipart/x-mixed-replace; boundary=frame')
+    
+    # Otherwise use processing pipeline
+    return Response(process_video_stream(url, model_param, classifier_param, settings_param),
+                   mimetype='multipart/x-mixed-replace; boundary=frame')
 
 @camera_bp.route('/connected-devices')
 def connected_devices():

@@ -54,7 +54,7 @@ class MLSQLiteProvider:
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute('''
-                SELECT id, name, version, model_type, description, data, created_at, updated_at
+                SELECT id, name, version, model_type, description, data, created_at, updated_at, category
                 FROM ml_models
                 WHERE name = ? AND version = ?
             ''', (name, version))
@@ -62,7 +62,9 @@ class MLSQLiteProvider:
             if row:
                 # Convert timestamps back to datetime objects
                 created_at = datetime.fromisoformat(row[6]) if row[6] else None
-                return (row[0], row[1], row[2], row[3], row[4], row[5], created_at)
+                updated_at = datetime.fromisoformat(row[7]) if row[7] else None
+                # Return: id, name, version, model_type, description, data, created_at, updated_at, category
+                return (row[0], row[1], row[2], row[3], row[4], row[5], created_at, updated_at, row[8])
             return None
 
     def get_model_data(self, name: str, version: str) -> Optional[bytes]:
@@ -138,14 +140,27 @@ class MLSQLiteProvider:
         import io
         if category == 'model':
             from ultralytics import YOLO
-            return YOLO(io.BytesIO(data))
+            # YOLO requires a file path, not BytesIO, so save to temp file
+            temp_path = self.get_model_to_temp_file(name, version, suffix='.pt')
+            if temp_path:
+                return YOLO(temp_path)
+            return None
         elif category == 'classifier':
             import torch
             import torchvision.models as models
-            model = models.resnet18(pretrained=False)
-            num_classes = 3
+            
+            # Load state dict to determine number of classes
+            state_dict = torch.load(io.BytesIO(data), weights_only=False)
+            
+            # Get number of classes from the fc layer in state dict
+            if 'fc.weight' in state_dict:
+                num_classes = state_dict['fc.weight'].shape[0]
+            else:
+                num_classes = 3  # fallback default
+            
+            # Create model with correct number of classes
+            model = models.resnet18(weights=None)
             model.fc = torch.nn.Linear(model.fc.in_features, num_classes)
-            state_dict = torch.load(io.BytesIO(data))
             model.load_state_dict(state_dict)
             model.eval()
             return model
