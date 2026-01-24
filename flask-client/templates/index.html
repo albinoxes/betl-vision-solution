@@ -5,5 +5,72 @@
 
 {% block content %}
 <h1>Welcome to Belt Vision</h1>
-<p>This is the home page. Content coming soon...</p>
+<p>Monitor active video processing threads.</p>
+
+<h2>Active Video Threads</h2>
+<button onclick="refreshThreads()">Refresh</button><br/><br/>
+<table border="1" id="activeThreadsTable">
+    <thead>
+        <tr>
+            <th>Thread ID</th>
+            <th>Device Type</th>
+            <th>Device ID</th>
+            <th>Model</th>
+            <th>Classifier</th>
+            <th>Settings</th>
+            <th>Status</th>
+            <th>Frames Processed</th>
+            <th>Uptime (seconds)</th>
+        </tr>
+    </thead>
+    <tbody id="threadsTableBody">
+        <tr>
+            <td colspan="9" style="text-align:center;">No active threads</td>
+        </tr>
+    </tbody>
+</table>
+{% endblock %}
+
+{% block additional_scripts %}
+<script>
+    async function refreshThreads() {
+        try {
+            const response = await fetch('/active-threads');
+            const threads = await response.json();
+            const tableBody = document.getElementById('threadsTableBody');
+            tableBody.innerHTML = '';
+            
+            if (threads.length === 0) {
+                tableBody.innerHTML = '<tr><td colspan="9" style="text-align:center;">No active threads</td></tr>';
+            } else {
+                threads.forEach(thread => {
+                    const row = document.createElement('tr');
+                    const statusColor = thread.running ? (thread.status === 'running' ? '#90EE90' : '#FFD700') : '#FFB6C6';
+                    row.innerHTML = `
+                        <td>${thread.thread_id}</td>
+                        <td>${thread.device_type}</td>
+                        <td>${thread.device_id}</td>
+                        <td>${thread.model_id}</td>
+                        <td>${thread.classifier_id}</td>
+                        <td>${thread.settings_id}</td>
+                        <td style="background-color:${statusColor};">${thread.status}</td>
+                        <td>${thread.frame_count}</td>
+                        <td>${thread.uptime}</td>
+                    `;
+                    tableBody.appendChild(row);
+                });
+            }
+        } catch (error) {
+            console.error('Error fetching threads:', error);
+        }
+    }
+    
+    // Refresh threads every 2 seconds
+    setInterval(refreshThreads, 2000);
+    
+    // Initial load
+    window.onload = function() {
+        refreshThreads();
+    };
+</script>
 {% endblock %}

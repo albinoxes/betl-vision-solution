@@ -16,6 +16,7 @@
                     <th>ML Model</th>
                     <th>Classifier</th>
                     <th>Settings</th>
+                    <th>Thread Control</th>
                     <th>Action</th>
                 </tr>
             </thead>
@@ -181,6 +182,7 @@
                 <td>${modelSelect}</td>
                 <td>${classifierSelect}</td>
                 <td>${settingsSelect}</td>
+                <td><button class="thread-btn" data-thread-id="${device.type}_${device.id}" onclick="toggleThread('${device.type}', ${device.id}, this)">Start Thread</button></td>
                 <td><button onclick="viewStream('${device.type}', ${device.id}, this)">View Stream</button></td>
             `;
             tableBody.appendChild(row);
@@ -238,5 +240,94 @@
     function cancelEdit() {
         document.getElementById('editSettingsForm').style.display = 'none';
     }
+
+    async function toggleThread(type, id, btn) {
+        const threadId = `${type}_${id}`;
+        const row = btn.closest('tr');
+        const selects = row.querySelectorAll('select');
+        const modelValue = selects[0].value;
+        const classifierValue = selects[1].value;
+        const settingsValue = selects[2].value;
+        
+        if (btn.textContent === 'Start Thread') {
+            // Start thread
+            try {
+                const response = await fetch('/start-thread', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        type: type,
+                        id: id,
+                        model: modelValue,
+                        classifier: classifierValue,
+                        settings: settingsValue
+                    })
+                });
+                
+                if (response.ok) {
+                    btn.textContent = 'Stop Thread';
+                    btn.style.backgroundColor = '#ff4444';
+                } else {
+                    const error = await response.json();
+                    alert('Error starting thread: ' + (error.error || 'Unknown error'));
+                }
+            } catch (error) {
+                alert('Error starting thread: ' + error);
+            }
+        } else {
+            // Stop thread
+            try {
+                const response = await fetch('/stop-thread', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        thread_id: threadId
+                    })
+                });
+                
+                if (response.ok) {
+                    btn.textContent = 'Start Thread';
+                    btn.style.backgroundColor = '';
+                } else {
+                    alert('Error stopping thread');
+                }
+            } catch (error) {
+                alert('Error stopping thread: ' + error);
+            }
+        }
+    }
+    
+    // Update thread button states periodically
+    async function updateThreadStates() {
+        try {
+            const response = await fetch('/active-threads');
+            const threads = await response.json();
+            
+            // Create a set of active thread IDs
+            const activeThreadIds = new Set(threads.filter(t => t.running).map(t => t.thread_id));
+            
+            // Update all thread buttons
+            document.querySelectorAll('.thread-btn').forEach(btn => {
+                const threadId = btn.getAttribute('data-thread-id');
+                if (activeThreadIds.has(threadId)) {
+                    btn.textContent = 'Stop Thread';
+                    btn.style.backgroundColor = '#ff4444';
+                } else {
+                    btn.textContent = 'Start Thread';
+                    btn.style.backgroundColor = '';
+                }
+            });
+        } catch (error) {
+            console.error('Error updating thread states:', error);
+        }
+    }
+    
+    // Update thread states every 3 seconds
+    setInterval(updateThreadStates, 3000);
+
 </script>
 {% endblock %}

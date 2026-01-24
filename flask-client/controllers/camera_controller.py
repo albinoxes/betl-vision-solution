@@ -2,15 +2,121 @@ from flask import Blueprint, render_template, Response, jsonify, request, redire
 import requests
 import cv2
 import numpy as np
+import threading
+import time
 from computer_vision.ml_model_image_processor import object_process_image
 from computer_vision.classifier_image_processor import classifier_process_image
 
 CAMERA_URL = "http://localhost:5001/video"
 
+# Global dictionary to track active video processing threads
+active_threads = {}
+thread_lock = threading.Lock()
+
 def generate_frames():
     r = requests.get(CAMERA_URL, stream=True)
     return Response(r.iter_content(chunk_size=1024),
                     mimetype='multipart/x-mixed-replace; boundary=frame')
+
+def process_video_stream_background(thread_id, url, model_id=None, classifier_id=None, settings_id=None):
+    """
+    Process video stream in background thread.
+    
+    Args:
+        thread_id: Unique identifier for this thread
+        url: URL of the video stream
+        model_id: Optional model identifier (name:version)
+        classifier_id: Optional classifier identifier (name:version)
+        settings_id: Optional settings identifier (name)
+    """
+    # Load model and settings once
+    model = None
+    settings = None
+    if model_id:
+        from computer_vision.ml_model_image_processor import get_model_from_database, get_camera_settings
+        try:
+            model = get_model_from_database(model_id)
+            settings = get_camera_settings(settings_id)
+        except Exception as e:
+            print(f"Error loading model or settings: {e}")
+    
+    frame_count = 0
+    with thread_lock:
+        if thread_id in active_threads:
+            active_threads[thread_id]['status'] = 'running'
+            active_threads[thread_id]['frame_count'] = 0
+    
+    try:
+        while True:
+            # Check if thread should stop
+            with thread_lock:
+                if thread_id not in active_threads or not active_threads[thread_id]['running']:
+                    break
+            
+            try:
+                r = requests.get(url, stream=True, timeout=10)
+                boundary = b'--frame'
+                buffer = b''
+                
+                for chunk in r.iter_content(chunk_size=8192):
+                    # Check if thread should stop
+                    with thread_lock:
+                        if thread_id not in active_threads or not active_threads[thread_id]['running']:
+                            break
+                    
+                    buffer += chunk
+                    while boundary in buffer:
+                        start = buffer.find(boundary)
+                        end = buffer.find(boundary, start + 1)
+                        if end == -1:
+                            break
+                        
+                        frame_data = buffer[start:end]
+                        buffer = buffer[end:]
+                        
+                        # Extract JPEG image from frame
+                        header_end = frame_data.find(b'\r\n\r\n')
+                        if header_end != -1:
+                            jpeg_start = header_end + 4
+                            jpeg_end = frame_data.find(b'\r\n', jpeg_start)
+                            if jpeg_end == -1:
+                                jpeg_data = frame_data[jpeg_start:]
+                            else:
+                                jpeg_data = frame_data[jpeg_start:jpeg_end]
+                            
+                            # Decode JPEG to numpy array
+                            nparr = np.frombuffer(jpeg_data, np.uint8)
+                            img2d = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+                            
+                            if img2d is not None:
+                                # Process with ML models if specified
+                                if model is not None:
+                                    try:
+                                        result = object_process_image(img2d.copy(), model=model, settings=settings)
+                                        frame_count += 1
+                                    except Exception as e:
+                                        print(f"Error processing with model: {e}")
+                                
+                                if classifier_id:
+                                    try:
+                                        belt_status = classifier_process_image(img2d.copy(), classifier_id=classifier_id)
+                                        frame_count += 1
+                                    except Exception as e:
+                                        print(f"Error processing with classifier: {e}")
+                                
+                                # Update frame count
+                                with thread_lock:
+                                    if thread_id in active_threads:
+                                        active_threads[thread_id]['frame_count'] = frame_count
+                                        active_threads[thread_id]['last_update'] = time.time()
+            except Exception as e:
+                print(f"Error in thread {thread_id}: {e}")
+                time.sleep(5)  # Wait before retrying
+    finally:
+        with thread_lock:
+            if thread_id in active_threads:
+                active_threads[thread_id]['status'] = 'stopped'
+                active_threads[thread_id]['running'] = False
 
 def process_video_stream(url, model_id=None, classifier_id=None, settings_id=None):
     """
@@ -259,3 +365,92 @@ def delete_camera_settings(setting_name):
     from sqlite.camera_settings_sqlite_provider import camera_settings_provider
     camera_settings_provider.delete_settings(setting_name)
     return redirect(url_for('camera.camera_manager'))
+
+@camera_bp.route('/start-thread', methods=['POST'])
+def start_thread():
+    data = request.get_json()
+    device_type = data.get('type')
+    device_id = data.get('id')
+    model_id = data.get('model')
+    classifier_id = data.get('classifier')
+    settings_id = data.get('settings')
+    
+    # Create unique thread ID
+    thread_id = f"{device_type}_{device_id}"
+    
+    # Check if thread already exists
+    with thread_lock:
+        if thread_id in active_threads and active_threads[thread_id]['running']:
+            return jsonify({'error': 'Thread already running for this device'}), 400
+    
+    # Determine URL based on device type
+    if device_type == 'legacy':
+        url = f"http://localhost:5002/camera-video/{device_id}"
+    elif device_type == 'simulator':
+        url = "http://localhost:5003/video/simulator"
+    else:  # webcam
+        url = "http://localhost:5001/video"
+    
+    # Create and start thread
+    thread = threading.Thread(
+        target=process_video_stream_background,
+        args=(thread_id, url, model_id, classifier_id, settings_id),
+        daemon=True
+    )
+    
+    with thread_lock:
+        active_threads[thread_id] = {
+            'thread': thread,
+            'running': True,
+            'status': 'starting',
+            'device_type': device_type,
+            'device_id': device_id,
+            'model_id': model_id or 'None',
+            'classifier_id': classifier_id or 'None',
+            'settings_id': settings_id or 'default',
+            'url': url,
+            'frame_count': 0,
+            'start_time': time.time(),
+            'last_update': time.time()
+        }
+    
+    thread.start()
+    return jsonify({'success': True, 'thread_id': thread_id})
+
+@camera_bp.route('/stop-thread', methods=['POST'])
+def stop_thread():
+    data = request.get_json()
+    thread_id = data.get('thread_id')
+    
+    with thread_lock:
+        if thread_id in active_threads:
+            active_threads[thread_id]['running'] = False
+            # Keep the entry for a while to show it stopped
+            return jsonify({'success': True})
+        else:
+            return jsonify({'error': 'Thread not found'}), 404
+
+@camera_bp.route('/active-threads')
+def get_active_threads():
+    threads_info = []
+    with thread_lock:
+        for thread_id, info in list(active_threads.items()):
+            # Remove stopped threads that have been stopped for more than 60 seconds
+            if not info['running'] and time.time() - info.get('last_update', 0) > 60:
+                del active_threads[thread_id]
+                continue
+            
+            threads_info.append({
+                'thread_id': thread_id,
+                'device_type': info['device_type'],
+                'device_id': info['device_id'],
+                'model_id': info['model_id'],
+                'classifier_id': info['classifier_id'],
+                'settings_id': info['settings_id'],
+                'status': info['status'],
+                'running': info['running'],
+                'frame_count': info['frame_count'],
+                'uptime': int(time.time() - info['start_time']),
+            })
+    
+    return jsonify(threads_info)
