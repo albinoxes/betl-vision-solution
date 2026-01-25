@@ -4,7 +4,7 @@ import cv2
 import numpy as np
 import threading
 import time
-from computer_vision.ml_model_image_processor import object_process_image
+from computer_vision.ml_model_image_processor import object_process_image, CameraSettings
 from computer_vision.classifier_image_processor import classifier_process_image
 
 CAMERA_URL = "http://localhost:5001/video"
@@ -370,44 +370,49 @@ def camera_manager():
 def add_camera_settings():
     from sqlite.camera_settings_sqlite_provider import camera_settings_provider
 
+    # Extract form data
     name = request.form.get('name')
+    if not name:
+        return "Name is required", 400
+    
+    # Use CameraSettings class to define defaults and extract values
     min_conf = float(request.form.get('min_conf', 0.8))
     min_d_detect = int(request.form.get('min_d_detect', 200))
     min_d_save = int(request.form.get('min_d_save', 200))
     particle_bb_dimension_factor = float(request.form.get('particle_bb_dimension_factor', 0.9))
     est_particle_volume_x = float(request.form.get('est_particle_volume_x', 8.357470139e-11))
     est_particle_volume_exp = float(request.form.get('est_particle_volume_exp', 3.02511466443))
-
-    if not name:
-        return "Name is required", 400
-
-    camera_settings_provider.insert_settings(name, min_conf, min_d_detect, min_d_save, particle_bb_dimension_factor, est_particle_volume_x, est_particle_volume_exp)
+    
+    camera_settings_provider.insert_settings(
+        name, 
+        min_conf, 
+        min_d_detect, 
+        min_d_save, 
+        particle_bb_dimension_factor, 
+        est_particle_volume_x, 
+        est_particle_volume_exp
+    )
     return redirect(url_for('camera.camera_manager'))
 
 @camera_bp.route('/update-camera-settings/<setting_name>', methods=['POST'])
 def update_camera_settings(setting_name):
     from sqlite.camera_settings_sqlite_provider import camera_settings_provider
 
-    min_conf = request.form.get('min_conf')
-    min_d_detect = request.form.get('min_d_detect')
-    min_d_save = request.form.get('min_d_save')
-    particle_bb_dimension_factor = request.form.get('particle_bb_dimension_factor')
-    est_particle_volume_x = request.form.get('est_particle_volume_x')
-    est_particle_volume_exp = request.form.get('est_particle_volume_exp')
-
+    # Define update fields mapping
+    update_fields = [
+        ('min_conf', float),
+        ('min_d_detect', int),
+        ('min_d_save', int),
+        ('particle_bb_dimension_factor', float),
+        ('est_particle_volume_x', float),
+        ('est_particle_volume_exp', float)
+    ]
+    
     updates = {}
-    if min_conf:
-        updates['min_conf'] = float(min_conf)
-    if min_d_detect:
-        updates['min_d_detect'] = int(min_d_detect)
-    if min_d_save:
-        updates['min_d_save'] = int(min_d_save)
-    if particle_bb_dimension_factor:
-        updates['particle_bb_dimension_factor'] = float(particle_bb_dimension_factor)
-    if est_particle_volume_x:
-        updates['est_particle_volume_x'] = float(est_particle_volume_x)
-    if est_particle_volume_exp:
-        updates['est_particle_volume_exp'] = float(est_particle_volume_exp)
+    for field_name, field_type in update_fields:
+        value = request.form.get(field_name)
+        if value:
+            updates[field_name] = field_type(value)
 
     camera_settings_provider.update_settings(setting_name, **updates)
     return redirect(url_for('camera.camera_manager'))
