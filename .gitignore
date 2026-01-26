@@ -7,3 +7,4 @@ webcam_env
 flask-client/computer_vision/__pycache__
 flask-client/sqlite/__pycache__
 simulator_env
+flask-client/controllers/__pycache__
