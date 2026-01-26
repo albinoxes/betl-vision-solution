@@ -6,6 +6,7 @@ import threading
 import time
 from computer_vision.ml_model_image_processor import object_process_image, CameraSettings
 from computer_vision.classifier_image_processor import classifier_process_image
+from storage_data.store_data_manager import store_data_manager
 
 CAMERA_URL = "http://localhost:5001/video"
 
@@ -106,6 +107,9 @@ def process_video_stream_background(thread_id, url, model_id=None, classifier_id
                             img2d = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
                             
                             if img2d is not None:
+                                # Save frame to storage directory
+                                store_data_manager.save_frame(img2d)
+                                
                                 # Process with ML models if specified
                                 if model is not None:
                                     try:
