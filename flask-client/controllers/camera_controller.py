@@ -4,9 +4,11 @@ import cv2
 import numpy as np
 import threading
 import time
+from datetime import datetime
 from computer_vision.ml_model_image_processor import object_process_image, CameraSettings
 from computer_vision.classifier_image_processor import classifier_process_image
 from storage_data.store_data_manager import store_data_manager
+from sqlite.video_stream_sqlite_provider import video_stream_provider
 
 CAMERA_URL = "http://localhost:5001/video"
 
@@ -40,6 +42,9 @@ def process_video_stream_background(thread_id, url, model_id=None, classifier_id
             settings = get_camera_settings(settings_id)
         except Exception as e:
             print(f"Error loading model or settings: {e}")
+    
+    # Get project title once before processing frames
+    project_title = store_data_manager.get_project_title()
     
     frame_count = 0
     with thread_lock:
@@ -107,8 +112,27 @@ def process_video_stream_background(thread_id, url, model_id=None, classifier_id
                             img2d = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
                             
                             if img2d is not None:
-                                # Save frame to storage directory
-                                store_data_manager.save_frame(img2d)
+                                # Save frame to storage directory and database
+                                try:
+                                    timestamp = datetime.now()
+                                    filename = f"frame_{timestamp.strftime('%Y%m%d_%H%M%S_%f')}.jpg"
+                                    storage_path = store_data_manager.ensure_storage_directory()
+                                    filepath = storage_path / filename
+                                    
+                                    # Save the frame to disk
+                                    if store_data_manager.save_frame(img2d, filename=filename):
+                                        # Insert frame record into database with project_id_camera_id format
+                                        try:
+                                            full_camera_id = f"{project_title}_{thread_id}"
+                                            video_stream_provider.insert_segment(
+                                                camera_id=full_camera_id,
+                                                start_time=timestamp,
+                                                file_path=str(filepath)
+                                            )
+                                        except Exception as e:
+                                            print(f"Error inserting frame record to database: {e}")
+                                except Exception as e:
+                                    print(f"Error saving frame: {e}")
                                 
                                 # Process with ML models if specified
                                 if model is not None:

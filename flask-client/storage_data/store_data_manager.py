@@ -2,6 +2,27 @@ import cv2
 from pathlib import Path
 from datetime import datetime
 from typing import Optional
+from dataclasses import dataclass
+
+
+@dataclass
+class VideoSegment:
+    """
+    Data class representing a video segment record.
+    """
+    id: int
+    camera_id: str
+    start_time: datetime
+    file_path: Optional[str] = None
+    
+    def to_dict(self) -> dict:
+        """Convert the video segment to a dictionary."""
+        return {
+            'id': self.id,
+            'camera_id': self.camera_id,
+            'start_time': self.start_time.isoformat() if self.start_time else None,
+            'file_path': self.file_path
+        }
 
 
 class StoreDataManager:
@@ -23,9 +44,12 @@ class StoreDataManager:
         if project_title is None:
             project_title = self.get_project_title()
         
-        storage_path = self.raw_data_store / project_title / 'export'
-        storage_path.mkdir(parents=True, exist_ok=True)
-        return storage_path
+        # Create the absolute path and ensure it exists
+        absolute_storage_path = self.raw_data_store / project_title / 'export'
+        absolute_storage_path.mkdir(parents=True, exist_ok=True)
+        
+        # Return relative path from project root
+        return Path('raw_data_store') / project_title / 'export'
     
     def save_frame(self, image, project_title: Optional[str] = None, filename: Optional[str] = None) -> bool:
         try:
