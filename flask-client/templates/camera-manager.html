@@ -136,8 +136,28 @@
 </script>
 <script>
     async function loadDevices() {
-        const response = await fetch('/connected-devices');
-        const devices = await response.json();
+        try {
+            const response = await fetch('/connected-devices');
+            if (!response.ok) {
+                console.error('Failed to fetch devices:', response.status);
+                return;
+            }
+            const devices = await response.json();
+            
+            // Get active threads
+            const threadsResponse = await fetch('/active-threads');
+            if (!threadsResponse.ok) {
+                console.error('Failed to fetch active threads:', threadsResponse.status);
+                return;
+            }
+            const activeThreads = await threadsResponse.json();
+        
+        // Create a map of active thread IDs
+        const activeThreadsMap = new Map();
+        activeThreads.forEach(thread => {
+            activeThreadsMap.set(thread.thread_id, thread);
+        });
+        
         const tableBody = document.getElementById('deviceTableBody');
         tableBody.innerHTML = '';
         
@@ -173,6 +193,13 @@
             });
             const settingsSelect = `<select>${settingsOptions}</select>`;
             
+            // Check if this device has an active thread
+            const threadId = `${device.type}_${device.id}`;
+            const threadInfo = activeThreadsMap.get(threadId);
+            const isThreadRunning = threadInfo && threadInfo.running;
+            const threadButtonText = isThreadRunning ? 'Stop Thread' : 'Start Thread';
+            const threadButtonColor = isThreadRunning ? 'background-color: #ff4444;' : '';
+            
             row.innerHTML = `
                 <td>${device.type}</td>
                 <td>${device.id}</td>
@@ -182,11 +209,14 @@
                 <td>${modelSelect}</td>
                 <td>${classifierSelect}</td>
                 <td>${settingsSelect}</td>
-                <td><button class="thread-btn" data-thread-id="${device.type}_${device.id}" onclick="toggleThread('${device.type}', ${device.id}, this)">Start Thread</button></td>
+                <td><button class="thread-btn" data-thread-id="${device.type}_${device.id}" onclick="toggleThread('${device.type}', ${device.id}, this)" style="${threadButtonColor}">${threadButtonText}</button></td>
                 <td><button onclick="viewStream('${device.type}', ${device.id}, this)">View Stream</button></td>
             `;
             tableBody.appendChild(row);
         });
+        } catch (error) {
+            console.error('Error loading devices:', error);
+        }
     }
     
     function viewStream(type, id, btn) {

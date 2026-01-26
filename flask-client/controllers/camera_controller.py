@@ -4,7 +4,7 @@ import cv2
 import numpy as np
 import threading
 import time
-from computer_vision.ml_model_image_processor import object_process_image
+from computer_vision.ml_model_image_processor import object_process_image, CameraSettings
 from computer_vision.classifier_image_processor import classifier_process_image
 
 CAMERA_URL = "http://localhost:5001/video"
@@ -46,6 +46,15 @@ def process_video_stream_background(thread_id, url, model_id=None, classifier_id
             active_threads[thread_id]['status'] = 'running'
             active_threads[thread_id]['frame_count'] = 0
     
+    # Create a session that can be closed from outside
+    session = requests.Session()
+    current_request = None
+    
+    # Store session in thread info so we can close it externally
+    with thread_lock:
+        if thread_id in active_threads:
+            active_threads[thread_id]['session'] = session
+    
     try:
         while True:
             # Check if thread should stop
@@ -54,15 +63,23 @@ def process_video_stream_background(thread_id, url, model_id=None, classifier_id
                     break
             
             try:
-                r = requests.get(url, stream=True, timeout=10)
+                # Use timeout only for connection, not for reading stream (None for read timeout)
+                current_request = session.get(url, stream=True, timeout=(5, None))
+                r = current_request
                 boundary = b'--frame'
                 buffer = b''
                 
+                # Process chunks with periodic stop checks
+                chunk_count = 0
                 for chunk in r.iter_content(chunk_size=8192):
-                    # Check if thread should stop
-                    with thread_lock:
-                        if thread_id not in active_threads or not active_threads[thread_id]['running']:
-                            break
+                    chunk_count += 1
+                    
+                    # Check stop flag every 10 chunks (not on every chunk for performance)
+                    if chunk_count % 10 == 0:
+                        with thread_lock:
+                            if thread_id not in active_threads or not active_threads[thread_id]['running']:
+                                r.close()
+                                break
                     
                     buffer += chunk
                     while boundary in buffer:
@@ -109,14 +126,48 @@ def process_video_stream_background(thread_id, url, model_id=None, classifier_id
                                     if thread_id in active_threads:
                                         active_threads[thread_id]['frame_count'] = frame_count
                                         active_threads[thread_id]['last_update'] = time.time()
+                
+                # Close the response properly
+                if current_request:
+                    current_request.close()
+                
+                # If we got here without errors, break the retry loop
+                # to avoid unnecessary reconnections
+                break
+                
+            except requests.exceptions.Timeout as e:
+                # Timeout error - don't retry, just stop
+                print(f"Timeout in thread {thread_id}: {e}")
+                break
+                
             except Exception as e:
                 print(f"Error in thread {thread_id}: {e}")
-                time.sleep(5)  # Wait before retrying
+                # Check if thread should stop before retrying
+                with thread_lock:
+                    if thread_id not in active_threads or not active_threads[thread_id]['running']:
+                        break
+                # Don't retry on errors - just stop the thread
+                break
     finally:
+        # Close any open request
+        if current_request:
+            try:
+                current_request.close()
+            except:
+                pass
+        
+        # Close the session
+        try:
+            session.close()
+        except:
+            pass
+            
         with thread_lock:
             if thread_id in active_threads:
                 active_threads[thread_id]['status'] = 'stopped'
                 active_threads[thread_id]['running'] = False
+                # Remove session reference
+                active_threads[thread_id].pop('session', None)
 
 def process_video_stream(url, model_id=None, classifier_id=None, settings_id=None):
     """
@@ -255,9 +306,10 @@ def simulator_video():
 @camera_bp.route('/connected-devices')
 def connected_devices():
     devices = []
+    
+    # Query legacy-camera-server
     try:
-        # Query legacy-camera-server
-        legacy_response = requests.get('http://localhost:5002/devices', timeout=5)
+        legacy_response = requests.get('http://localhost:5002/devices', timeout=3)
         if legacy_response.status_code == 200:
             legacy_devices = legacy_response.json()
             for dev in legacy_devices:
@@ -268,12 +320,12 @@ def connected_devices():
                     'ip': dev['info'].split(';')[0] if ';' in dev['info'] else 'unknown',
                     'status': dev['status']
                 })
-    except:
+    except Exception as e:
         pass  # Server not running or error
 
+    # Query webcam-server
     try:
-        # Query webcam-server
-        webcam_response = requests.get('http://localhost:5001/devices', timeout=5)
+        webcam_response = requests.get('http://localhost:5001/devices', timeout=3)
         if webcam_response.status_code == 200:
             webcam_devices = webcam_response.json()
             for dev in webcam_devices:
@@ -284,12 +336,12 @@ def connected_devices():
                     'ip': 'localhost',
                     'status': dev['status']
                 })
-    except:
-        pass
+    except Exception as e:
+        pass  # Server not running or error
 
+    # Query simulator-server
     try:
-        # Query simulator-server
-        simulator_response = requests.get('http://localhost:5003/devices', timeout=5)
+        simulator_response = requests.get('http://localhost:5003/devices', timeout=3)
         if simulator_response.status_code == 200:
             simulator_devices = simulator_response.json()
             for dev in simulator_devices:
@@ -301,7 +353,7 @@ def connected_devices():
                     'status': dev['status']
                 })
     except Exception as e:
-        print(f"Simulator server not available: {e}")
+        pass  # Server not running or error
 
     return jsonify(devices)
 
@@ -318,44 +370,49 @@ def camera_manager():
 def add_camera_settings():
     from sqlite.camera_settings_sqlite_provider import camera_settings_provider
 
+    # Extract form data
     name = request.form.get('name')
+    if not name:
+        return "Name is required", 400
+    
+    # Use CameraSettings class to define defaults and extract values
     min_conf = float(request.form.get('min_conf', 0.8))
     min_d_detect = int(request.form.get('min_d_detect', 200))
     min_d_save = int(request.form.get('min_d_save', 200))
     particle_bb_dimension_factor = float(request.form.get('particle_bb_dimension_factor', 0.9))
     est_particle_volume_x = float(request.form.get('est_particle_volume_x', 8.357470139e-11))
     est_particle_volume_exp = float(request.form.get('est_particle_volume_exp', 3.02511466443))
-
-    if not name:
-        return "Name is required", 400
-
-    camera_settings_provider.insert_settings(name, min_conf, min_d_detect, min_d_save, particle_bb_dimension_factor, est_particle_volume_x, est_particle_volume_exp)
+    
+    camera_settings_provider.insert_settings(
+        name, 
+        min_conf, 
+        min_d_detect, 
+        min_d_save, 
+        particle_bb_dimension_factor, 
+        est_particle_volume_x, 
+        est_particle_volume_exp
+    )
     return redirect(url_for('camera.camera_manager'))
 
 @camera_bp.route('/update-camera-settings/<setting_name>', methods=['POST'])
 def update_camera_settings(setting_name):
     from sqlite.camera_settings_sqlite_provider import camera_settings_provider
 
-    min_conf = request.form.get('min_conf')
-    min_d_detect = request.form.get('min_d_detect')
-    min_d_save = request.form.get('min_d_save')
-    particle_bb_dimension_factor = request.form.get('particle_bb_dimension_factor')
-    est_particle_volume_x = request.form.get('est_particle_volume_x')
-    est_particle_volume_exp = request.form.get('est_particle_volume_exp')
-
+    # Define update fields mapping
+    update_fields = [
+        ('min_conf', float),
+        ('min_d_detect', int),
+        ('min_d_save', int),
+        ('particle_bb_dimension_factor', float),
+        ('est_particle_volume_x', float),
+        ('est_particle_volume_exp', float)
+    ]
+    
     updates = {}
-    if min_conf:
-        updates['min_conf'] = float(min_conf)
-    if min_d_detect:
-        updates['min_d_detect'] = int(min_d_detect)
-    if min_d_save:
-        updates['min_d_save'] = int(min_d_save)
-    if particle_bb_dimension_factor:
-        updates['particle_bb_dimension_factor'] = float(particle_bb_dimension_factor)
-    if est_particle_volume_x:
-        updates['est_particle_volume_x'] = float(est_particle_volume_x)
-    if est_particle_volume_exp:
-        updates['est_particle_volume_exp'] = float(est_particle_volume_exp)
+    for field_name, field_type in update_fields:
+        value = request.form.get(field_name)
+        if value:
+            updates[field_name] = field_type(value)
 
     camera_settings_provider.update_settings(setting_name, **updates)
     return redirect(url_for('camera.camera_manager'))
@@ -422,13 +479,27 @@ def stop_thread():
     data = request.get_json()
     thread_id = data.get('thread_id')
     
+    thread_obj = None
+    session_obj = None
+    
     with thread_lock:
         if thread_id in active_threads:
             active_threads[thread_id]['running'] = False
-            # Keep the entry for a while to show it stopped
-            return jsonify({'success': True})
-        else:
-            return jsonify({'error': 'Thread not found'}), 404
+            thread_obj = active_threads[thread_id].get('thread')
+            session_obj = active_threads[thread_id].get('session')
+    
+    # Force close the session to interrupt any blocking reads
+    if session_obj:
+        try:
+            session_obj.close()
+        except:
+            pass
+    
+    # Wait for thread to actually stop (max 3 seconds)
+    if thread_obj and thread_obj.is_alive():
+        thread_obj.join(timeout=3)
+    
+    return jsonify({'success': True})
 
 @camera_bp.route('/active-threads')
 def get_active_threads():
