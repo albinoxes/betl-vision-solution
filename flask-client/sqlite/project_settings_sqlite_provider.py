@@ -1,6 +1,31 @@
 import sqlite3
 from datetime import datetime
-from typing import Optional, Tuple
+from typing import Optional
+from dataclasses import dataclass
+
+
+@dataclass
+class ProjectSettings:
+    """
+    Data class representing project settings.
+    """
+    id: int
+    vm_number: str
+    title: str
+    description: str
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+    
+    def to_dict(self) -> dict:
+        """Convert the settings to a dictionary."""
+        return {
+            'id': self.id,
+            'vm_number': self.vm_number,
+            'title': self.title,
+            'description': self.description,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None
+        }
 
 
 class ProjectSettingsSQLiteProvider:
@@ -34,10 +59,10 @@ class ProjectSettingsSQLiteProvider:
                 ''', ('VM001', 'Belt Vision Project', 'Default project configuration'))
             conn.commit()
 
-    def get_current_settings(self) -> Optional[Tuple[int, str, str, str, datetime, datetime]]:
+    def get_current_settings(self) -> Optional[ProjectSettings]:
         """
         Get the current project settings (assumes single row configuration).
-        Returns: (id, vm_number, title, description, created_at, updated_at)
+        Returns: ProjectSettings instance
         """
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
@@ -51,7 +76,14 @@ class ProjectSettingsSQLiteProvider:
             if row:
                 created_at = datetime.fromisoformat(row[4]) if row[4] else None
                 updated_at = datetime.fromisoformat(row[5]) if row[5] else None
-                return (row[0], row[1], row[2], row[3], created_at, updated_at)
+                return ProjectSettings(
+                    id=row[0],
+                    vm_number=row[1],
+                    title=row[2],
+                    description=row[3],
+                    created_at=created_at,
+                    updated_at=updated_at
+                )
             return None
 
     def update_settings(self, vm_number: str, title: str, description: str) -> bool:
@@ -84,12 +116,5 @@ class ProjectSettingsSQLiteProvider:
         """
         settings = self.get_current_settings()
         if settings:
-            return {
-                'id': settings[0],
-                'vm_number': settings[1],
-                'title': settings[2],
-                'description': settings[3],
-                'created_at': settings[4].isoformat() if settings[4] else None,
-                'updated_at': settings[5].isoformat() if settings[5] else None
-            }
+            return settings.to_dict()
         return None
