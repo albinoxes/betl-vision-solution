@@ -116,18 +116,18 @@ def process_video_stream_background(thread_id, url, model_id=None, classifier_id
                                 try:
                                     timestamp = datetime.now()
                                     filename = f"frame_{timestamp.strftime('%Y%m%d_%H%M%S_%f')}.jpg"
-                                    storage_path = store_data_manager.ensure_storage_directory()
-                                    filepath = storage_path / filename
                                     
-                                    # Save the frame to disk
-                                    if store_data_manager.save_frame(img2d, filename=filename):
+                                    # Save the frame to disk with session tracking
+                                    filepath = store_data_manager.save_frame(img2d, session_key=thread_id, filename=filename)
+                                    
+                                    if filepath:
                                         # Insert frame record into database with project_id_camera_id format
                                         try:
                                             full_camera_id = f"{project_title}_{thread_id}"
                                             video_stream_provider.insert_segment(
                                                 camera_id=full_camera_id,
                                                 start_time=timestamp,
-                                                file_path=str(filepath)
+                                                file_path=filepath
                                             )
                                         except Exception as e:
                                             print(f"Error inserting frame record to database: {e}")
@@ -177,6 +177,12 @@ def process_video_stream_background(thread_id, url, model_id=None, classifier_id
                 # Don't retry on errors - just stop the thread
                 break
     finally:
+        # Clean up session tracking
+        try:
+            store_data_manager.end_session(thread_id)
+        except Exception as e:
+            print(f"Error ending session: {e}")
+        
         # Close any open request
         if current_request:
             try:

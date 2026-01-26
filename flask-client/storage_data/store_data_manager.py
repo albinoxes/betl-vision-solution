@@ -30,6 +30,10 @@ class StoreDataManager:
         # Get the project root (parent of flask-client)
         self.project_root = Path(__file__).parent.parent.parent
         self.raw_data_store = self.project_root / 'raw_data_store'
+        
+        # Track active recording sessions: {session_key: {'folder_start_time': datetime, 'current_folder': str}}
+        self.active_sessions = {}
+        self.session_duration_minutes = 15
     
     def get_project_title(self) -> str:
         """Get the current project title from database."""
@@ -51,17 +55,89 @@ class StoreDataManager:
         # Return relative path from project root
         return Path('raw_data_store') / project_title / 'export'
     
-    def save_frame(self, image, project_title: Optional[str] = None, filename: Optional[str] = None) -> bool:
+    def get_current_session_folder(self, session_key: str, project_title: Optional[str] = None) -> Path:
+        """
+        Get the current active timestamped folder for a recording session.
+        Creates a new folder if none exists or if current folder is older than 15 minutes.
+        
+        Args:
+            session_key: Unique identifier for the recording session (e.g., thread_id)
+            project_title: Optional project title
+            
+        Returns:
+            Relative path to the current session folder
+        """
+        if project_title is None:
+            project_title = self.get_project_title()
+        
+        current_time = datetime.now()
+        
+        # Check if we have an active session and if it's still valid (< 15 minutes old)
+        if session_key in self.active_sessions:
+            session_info = self.active_sessions[session_key]
+            folder_start_time = session_info['folder_start_time']
+            elapsed_minutes = (current_time - folder_start_time).total_seconds() / 60
+            
+            # If less than 15 minutes, return existing folder
+            if elapsed_minutes < self.session_duration_minutes:
+                return session_info['current_folder']
+        
+        # Create new timestamped folder
+        timestamp = current_time.strftime('%Y%m%d_%H%M%S')
+        folder_name = f"session_{timestamp}"
+        
+        # Create absolute path
+        absolute_folder_path = self.raw_data_store / project_title / 'export' / folder_name
+        absolute_folder_path.mkdir(parents=True, exist_ok=True)
+        
+        # Create relative path
+        relative_folder_path = Path('raw_data_store') / project_title / 'export' / folder_name
+        
+        # Update session tracking
+        self.active_sessions[session_key] = {
+            'folder_start_time': current_time,
+            'current_folder': relative_folder_path
+        }
+        
+        return relative_folder_path
+    
+    def end_session(self, session_key: str):
+        """
+        End a recording session and clean up tracking.
+        
+        Args:
+            session_key: Unique identifier for the recording session
+        """
+        if session_key in self.active_sessions:
+            del self.active_sessions[session_key]
+    
+    def save_frame(self, image, session_key: str, project_title: Optional[str] = None, filename: Optional[str] = None) -> bool:
+        """
+        Save a frame to the storage directory within a timestamped session folder.
+        
+        Args:
+            image: OpenCV image to save
+            session_key: Unique identifier for the recording session (e.g., thread_id)
+            project_title: Optional project title
+            filename: Optional filename
+            
+        Returns:
+            True if successful, False otherwise
+        """
         try:
-            storage_path = self.ensure_storage_directory(project_title)
+            # Get current session folder (creates new one if needed after 15min)
+            storage_path = self.get_current_session_folder(session_key, project_title)
             
             if filename is None:
                 timestamp = datetime.now().strftime('%Y%m%d_%H%M%S_%f')
                 filename = f"frame_{timestamp}.jpg"
             
-            filepath = storage_path / filename
-            cv2.imwrite(str(filepath), image)
-            return True
+            # Convert to absolute path for saving
+            absolute_filepath = self.project_root / storage_path / filename
+            cv2.imwrite(str(absolute_filepath), image)
+            
+            # Return relative filepath
+            return str(storage_path / filename)
         except Exception as e:
             print(f"Error saving frame: {e}")
             return False
