@@ -15,6 +15,7 @@
                 <li><a href="/" class="{% block nav_home %}{% endblock %}">Home</a></li>
                 <li><a href="{{ url_for('camera.camera_manager') }}" class="{% block nav_camera %}{% endblock %}">Camera Manager</a></li>
                 <li><a href="{{ url_for('ml.model_manager') }}" class="{% block nav_models %}{% endblock %}">Models & Classifiers</a></li>
+                <li><a href="{{ url_for('project.project_settings') }}" class="{% block nav_project %}{% endblock %}">Project Settings</a></li>
             </ul>
         </div>
     </nav>
