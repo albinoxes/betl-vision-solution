@@ -4,8 +4,11 @@
 {% block nav_home %}active{% endblock %}
 
 {% block content %}
-<h1>Welcome to Belt Vision</h1>
-<p>Monitor active video processing threads.</p>
+<div class="project-info">
+    <h1 id="projectTitle">Belt Vision</h1>
+    <p id="projectDescription">Monitor active video processing threads.</p>
+    <p class="vm-info"><strong>VM Number:</strong> <span id="vmNumber">-</span></p>
+</div>
 
 <h2>Active Video Threads</h2>
 <button onclick="refreshThreads()">Refresh</button><br/><br/>
@@ -33,6 +36,20 @@
 
 {% block additional_scripts %}
 <script>
+    async function loadProjectInfo() {
+        try {
+            const response = await fetch('/project-settings');
+            if (response.ok) {
+                const settings = await response.json();
+                document.getElementById('projectTitle').textContent = settings.title || 'Belt Vision';
+                document.getElementById('projectDescription').textContent = settings.description || 'Monitor active video processing threads.';
+                document.getElementById('vmNumber').textContent = settings.vm_number || '-';
+            }
+        } catch (error) {
+            console.error('Error loading project info:', error);
+        }
+    }
+
     async function refreshThreads() {
         try {
             const response = await fetch('/active-threads');
@@ -70,6 +87,7 @@
     
     // Initial load
     window.onload = function() {
+        loadProjectInfo();
         refreshThreads();
     };
 </script>

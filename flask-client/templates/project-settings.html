@@ -1,0 +1,140 @@
+{% extends "base.html" %}
+
+{% block title %}Belt Vision - Project Settings{% endblock %}
+{% block nav_project %}active{% endblock %}
+
+{% block content %}
+<h1>Project Settings</h1>
+<p>Configure your project information and settings.</p>
+
+<div class="settings-form-container">
+    <form id="projectSettingsForm" onsubmit="saveProjectSettings(event)">
+        <div class="form-group">
+            <label for="vm_number">VM Number:</label>
+            <input type="text" id="vm_number" name="vm_number" required>
+            <small>Unique identifier for this virtual machine</small>
+        </div>
+        
+        <div class="form-group">
+            <label for="title">Project Title:</label>
+            <input type="text" id="title" name="title" required>
+            <small>The display name for your project</small>
+        </div>
+        
+        <div class="form-group">
+            <label for="description">Description:</label>
+            <textarea id="description" name="description" rows="4"></textarea>
+            <small>Brief description of your project</small>
+        </div>
+        
+        <div class="form-actions">
+            <button type="submit" class="btn-save">Save Settings</button>
+            <button type="button" onclick="loadProjectSettings()" class="btn-refresh">Reset Form</button>
+        </div>
+    </form>
+    
+    <div id="settingsMessage" class="message" style="display: none;"></div>
+</div>
+
+<div class="current-settings">
+    <h2>Current Settings</h2>
+    <table class="settings-table">
+        <tr>
+            <th>VM Number</th>
+            <td id="current_vm_number">-</td>
+        </tr>
+        <tr>
+            <th>Title</th>
+            <td id="current_title">-</td>
+        </tr>
+        <tr>
+            <th>Description</th>
+            <td id="current_description">-</td>
+        </tr>
+        <tr>
+            <th>Last Updated</th>
+            <td id="current_updated_at">-</td>
+        </tr>
+    </table>
+</div>
+{% endblock %}
+
+{% block additional_scripts %}
+<script>
+    async function loadProjectSettings() {
+        try {
+            const response = await fetch('/project-settings');
+            if (response.ok) {
+                const settings = await response.json();
+                
+                // Populate form
+                document.getElementById('vm_number').value = settings.vm_number || '';
+                document.getElementById('title').value = settings.title || '';
+                document.getElementById('description').value = settings.description || '';
+                
+                // Populate current settings display
+                document.getElementById('current_vm_number').textContent = settings.vm_number || '-';
+                document.getElementById('current_title').textContent = settings.title || '-';
+                document.getElementById('current_description').textContent = settings.description || '-';
+                
+                if (settings.updated_at) {
+                    const date = new Date(settings.updated_at);
+                    document.getElementById('current_updated_at').textContent = date.toLocaleString();
+                } else {
+                    document.getElementById('current_updated_at').textContent = '-';
+                }
+            }
+        } catch (error) {
+            console.error('Error loading project settings:', error);
+        }
+    }
+
+    async function saveProjectSettings(event) {
+        event.preventDefault();
+        
+        const formData = {
+            vm_number: document.getElementById('vm_number').value,
+            title: document.getElementById('title').value,
+            description: document.getElementById('description').value
+        };
+
+        try {
+            const response = await fetch('/project-settings', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(formData)
+            });
+
+            const result = await response.json();
+            const messageDiv = document.getElementById('settingsMessage');
+            messageDiv.style.display = 'block';
+            
+            if (response.ok) {
+                messageDiv.textContent = 'Settings saved successfully!';
+                messageDiv.className = 'message success';
+                
+                // Reload the current settings display
+                setTimeout(() => {
+                    loadProjectSettings();
+                    messageDiv.style.display = 'none';
+                }, 2000);
+            } else {
+                messageDiv.textContent = 'Error: ' + (result.error || 'Failed to save settings');
+                messageDiv.className = 'message error';
+            }
+        } catch (error) {
+            const messageDiv = document.getElementById('settingsMessage');
+            messageDiv.style.display = 'block';
+            messageDiv.textContent = 'Error saving settings: ' + error.message;
+            messageDiv.className = 'message error';
+        }
+    }
+    
+    // Load settings on page load
+    window.onload = function() {
+        loadProjectSettings();
+    };
+</script>
+{% endblock %}

@@ -1,11 +1,13 @@
 from flask import Flask, render_template
 from controllers.camera_controller import camera_bp
 from controllers.ml_model_controller import ml_bp
+from controllers.project_controller import project_bp
 
 app = Flask(__name__)
 
 app.register_blueprint(camera_bp)
 app.register_blueprint(ml_bp)
+app.register_blueprint(project_bp)
 
 @app.route('/')
 def index():
