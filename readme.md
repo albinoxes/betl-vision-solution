@@ -6,7 +6,7 @@
 1) flask-client
     - python3.12 -m venv flask_env
     - .\flask_env\Scripts\Activate.ps1
-    - pip install requests, flask, Pillow, opencv-python, torch, torchvision, ultralytics, pandas
+    - pip install requests, flask, Pillow, opencv-python, torch, torchvision, ultralytics, pandas, paramiko
 
 2) webcam-server:
     - python3.12 -m venv webcam_env

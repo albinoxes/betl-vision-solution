@@ -160,6 +160,62 @@
     </div>
 </div>
 
+<div class="sftp-section">
+    <h2>SFTP Servers</h2>
+    <table class="settings-table" id="sftpTable">
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Server Name</th>
+                <th>Username</th>
+                <th>Password</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody id="sftpTableBody">
+            <tr>
+                <td colspan="5">No SFTP servers found</td>
+            </tr>
+        </tbody>
+    </table>
+    
+    <button onclick="toggleSftpForm()" class="btn-toggle" id="toggleSftpButton">
+        ▼ Add New SFTP Server
+    </button>
+    
+    <div class="sftp-form-container" id="sftpFormContainer" style="display: none;">
+        <h3 id="sftpFormTitle">Add New SFTP Server</h3>
+        <form id="sftpForm" onsubmit="saveSftpServer(event)">
+            <input type="hidden" id="sftpServerId" value="">
+            
+            <div class="form-group">
+                <label for="sftp_server_name">Server Name:</label>
+                <input type="text" id="sftp_server_name" name="sftp_server_name" required>
+                <small>SFTP server address or hostname</small>
+            </div>
+            
+            <div class="form-group">
+                <label for="sftp_username">Username:</label>
+                <input type="text" id="sftp_username" name="sftp_username" required>
+                <small>SFTP login username</small>
+            </div>
+            
+            <div class="form-group">
+                <label for="sftp_password">Password:</label>
+                <input type="password" id="sftp_password" name="sftp_password" required>
+                <small>SFTP login password</small>
+            </div>
+            
+            <div class="form-actions">
+                <button type="submit" class="btn-save">Save SFTP Server</button>
+                <button type="button" onclick="cancelSftpEdit()" class="btn-refresh">Cancel</button>
+            </div>
+        </form>
+        
+        <div id="sftpMessage" class="message" style="display: none;"></div>
+    </div>
+</div>
+
 <style>
     .btn-toggle {
         margin-top: 20px;
@@ -190,7 +246,21 @@
         border-top: 2px solid #ddd;
     }
     
+    .sftp-section {
+        margin-top: 40px;
+        padding-top: 20px;
+        border-top: 2px solid #ddd;
+    }
+    
     .status-form-container {
+        margin-top: 20px;
+        padding: 20px;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        background-color: #f9f9f9;
+    }
+    
+    .sftp-form-container {
         margin-top: 20px;
         padding: 20px;
         border: 1px solid #ddd;
@@ -512,6 +582,158 @@
     window.onload = function() {
         loadProjectSettings();
         loadModelStatuses();
+        loadSftpServers();
     };
+    
+    // SFTP Server Management Functions
+    let isEditingSftp = false;
+    
+    function toggleSftpForm() {
+        const formContainer = document.getElementById('sftpFormContainer');
+        const toggleButton = document.getElementById('toggleSftpButton');
+        
+        if (formContainer.style.display === 'none') {
+            formContainer.style.display = 'block';
+            toggleButton.textContent = '▲ Hide Form';
+        } else {
+            formContainer.style.display = 'none';
+            toggleButton.textContent = '▼ Add New SFTP Server';
+            cancelSftpEdit();
+        }
+    }
+    
+    function cancelSftpEdit() {
+        isEditingSftp = false;
+        document.getElementById('sftpFormTitle').textContent = 'Add New SFTP Server';
+        document.getElementById('sftpForm').reset();
+        document.getElementById('sftpServerId').value = '';
+        const messageDiv = document.getElementById('sftpMessage');
+        messageDiv.style.display = 'none';
+    }
+    
+    async function loadSftpServers() {
+        try {
+            const response = await fetch('/sftp-servers');
+            if (response.ok) {
+                const servers = await response.json();
+                const tbody = document.getElementById('sftpTableBody');
+                
+                if (servers.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="5">No SFTP servers found</td></tr>';
+                } else {
+                    tbody.innerHTML = servers.map(server => `
+                        <tr>
+                            <td>${server.id}</td>
+                            <td>${server.server_name}</td>
+                            <td>${server.username}</td>
+                            <td>${'*'.repeat(server.password.length)}</td>
+                            <td>
+                                <button class="btn-action btn-edit" onclick="editSftpServer(${server.id}, '${server.server_name.replace(/'/g, "\\'")}', '${server.username.replace(/'/g, "\\'")}', '${server.password.replace(/'/g, "\\'")}')">Edit</button>
+                                <button class="btn-action btn-delete" onclick="deleteSftpServer(${server.id})">Delete</button>
+                            </td>
+                        </tr>
+                    `).join('');
+                }
+            }
+        } catch (error) {
+            console.error('Error loading SFTP servers:', error);
+        }
+    }
+    
+    function editSftpServer(id, serverName, username, password) {
+        isEditingSftp = true;
+        document.getElementById('sftpFormTitle').textContent = 'Edit SFTP Server';
+        document.getElementById('sftpServerId').value = id;
+        document.getElementById('sftp_server_name').value = serverName;
+        document.getElementById('sftp_username').value = username;
+        document.getElementById('sftp_password').value = password;
+        
+        // Show the form if it's hidden
+        const formContainer = document.getElementById('sftpFormContainer');
+        if (formContainer.style.display === 'none') {
+            toggleSftpForm();
+        }
+        
+        // Scroll to form
+        formContainer.scrollIntoView({ behavior: 'smooth' });
+    }
+    
+    async function saveSftpServer(event) {
+        event.preventDefault();
+        
+        const serverId = document.getElementById('sftpServerId').value;
+        const serverName = document.getElementById('sftp_server_name').value.trim();
+        const username = document.getElementById('sftp_username').value.trim();
+        const password = document.getElementById('sftp_password').value.trim();
+        
+        const serverData = {
+            server_name: serverName,
+            username: username,
+            password: password
+        };
+        
+        try {
+            let response;
+            if (isEditingSftp && serverId) {
+                // Update existing server
+                response = await fetch(`/sftp-server/${serverId}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(serverData)
+                });
+            } else {
+                // Create new server
+                response = await fetch('/sftp-server', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(serverData)
+                });
+            }
+            
+            const result = await response.json();
+            const messageDiv = document.getElementById('sftpMessage');
+            messageDiv.style.display = 'block';
+            
+            if (response.ok) {
+                messageDiv.textContent = result.message || 'SFTP server saved successfully!';
+                messageDiv.className = 'message success';
+                
+                setTimeout(() => {
+                    loadSftpServers();
+                    cancelSftpEdit();
+                    messageDiv.style.display = 'none';
+                }, 1500);
+            } else {
+                messageDiv.textContent = 'Error: ' + (result.error || 'Failed to save SFTP server');
+                messageDiv.className = 'message error';
+            }
+        } catch (error) {
+            const messageDiv = document.getElementById('sftpMessage');
+            messageDiv.style.display = 'block';
+            messageDiv.textContent = 'Error saving SFTP server: ' + error.message;
+            messageDiv.className = 'message error';
+        }
+    }
+    
+    async function deleteSftpServer(id) {
+        if (!confirm(`Are you sure you want to delete SFTP server with ID ${id}?`)) {
+            return;
+        }
+        
+        try {
+            const response = await fetch(`/sftp-server/${id}`, {
+                method: 'DELETE'
+            });
+            
+            if (response.ok) {
+                loadSftpServers();
+            } else {
+                const result = await response.json();
+                alert('Error: ' + (result.error || 'Failed to delete SFTP server'));
+            }
+        } catch (error) {
+            alert('Error deleting SFTP server: ' + error.message);
+        }
+    }
 </script>
 {% endblock %}
