@@ -9,6 +9,7 @@ from computer_vision.ml_model_image_processor import object_process_image, Camer
 from computer_vision.classifier_image_processor import classifier_process_image
 from storage_data.store_data_manager import store_data_manager
 from sqlite.video_stream_sqlite_provider import video_stream_provider
+from iris_communication.iris_input_processor import iris_input_processor
 
 CAMERA_URL = "http://localhost:5001/video"
 
@@ -43,8 +44,19 @@ def process_video_stream_background(thread_id, url, model_id=None, classifier_id
         except Exception as e:
             print(f"Error loading model or settings: {e}")
     
-    # Get project title once before processing frames
-    project_title = store_data_manager.get_project_title()
+    # Get project title and settings once before processing frames
+    from sqlite.project_settings_sqlite_provider import project_settings_provider
+    project_settings = project_settings_provider.get_project_settings()
+    project_title = project_settings.title if project_settings else "default"
+    
+    # Debug logging for IRIS configuration
+    if project_settings:
+        print(f"[IRIS] Project settings loaded: {project_title}")
+        print(f"[IRIS] Main folder: {project_settings.iris_main_folder}")
+        print(f"[IRIS] Model subfolder: {project_settings.iris_model_subfolder}")
+        print(f"[IRIS] Classifier subfolder: {project_settings.iris_classifier_subfolder}")
+    else:
+        print(f"[IRIS] Warning: No project settings found!")
     
     frame_count = 0
     with thread_lock:
@@ -139,6 +151,14 @@ def process_video_stream_background(thread_id, url, model_id=None, classifier_id
                                     try:
                                         result = object_process_image(img2d.copy(), model=model, settings=settings)
                                         frame_count += 1
+                                        
+                                        # Generate IRIS input CSV for result
+                                        iris_input_processor.generate_iris_input_data(
+                                            project_settings=project_settings,
+                                            timestamp=timestamp,
+                                            data=result,
+                                            folder_type='model'
+                                        )
                                     except Exception as e:
                                         print(f"Error processing with model: {e}")
                                 
@@ -146,6 +166,14 @@ def process_video_stream_background(thread_id, url, model_id=None, classifier_id
                                     try:
                                         belt_status = classifier_process_image(img2d.copy(), classifier_id=classifier_id)
                                         frame_count += 1
+                                        
+                                        # Generate IRIS input CSV for belt status
+                                        iris_input_processor.generate_iris_input_data(
+                                            project_settings=project_settings,
+                                            timestamp=timestamp,
+                                            data=belt_status,
+                                            folder_type='classifier'
+                                        )
                                     except Exception as e:
                                         print(f"Error processing with classifier: {e}")
                                 

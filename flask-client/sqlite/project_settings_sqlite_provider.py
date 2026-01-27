@@ -119,3 +119,11 @@ class ProjectSettingsSQLiteProvider:
         if settings:
             return settings.to_dict()
         return None
+    
+    def get_project_settings(self) -> Optional[ProjectSettings]:
+        """Alias for get_current_settings for compatibility."""
+        return self.get_current_settings()
+
+
+# Global instance
+project_settings_provider = ProjectSettingsSQLiteProvider()
