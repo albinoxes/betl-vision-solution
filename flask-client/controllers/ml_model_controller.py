@@ -21,13 +21,12 @@ def upload_model():
     version = request.form.get('version')
     model_type = request.form.get('model_type')
     category = request.form.get('category', 'model')
-    description = request.form.get('description')
 
     if not all([name, version, model_type]):
         return "Missing required fields", 400
 
     data = file.read()
-    ml_provider.insert_model(name, version, model_type, data, description, category)
+    ml_provider.insert_model(name, version, model_type, data, category)
     return redirect(url_for('ml.model_manager'))
 
 @ml_bp.route('/delete-model/<int:model_id>', methods=['POST'])

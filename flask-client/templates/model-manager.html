@@ -49,11 +49,6 @@
                 </div>
             </div>
 
-            <div class="form-group">
-                <label for="description">Description (optional):</label>
-                <textarea id="description" name="description" rows="3" placeholder="Optional description"></textarea>
-            </div>
-
             <div class="form-actions">
                 <button type="submit" class="btn-save">Save</button>
                 <button type="button" class="btn-cancel" onclick="cancelUploadForm()">Cancel</button>
@@ -69,7 +64,6 @@
                 <th>Name</th>
                 <th>Version</th>
                 <th>Type</th>
-                <th>Description</th>
                 <th>Created At</th>
                 <th>Updated At</th>
                 <th>Default</th>
@@ -83,9 +77,8 @@
                 <td>{{ model[1] }}</td>
                 <td>{{ model[2] }}</td>
                 <td>{{ model[3] }}</td>
-                <td>{{ model[4] or 'N/A' }}</td>
+                <td>{{ model[4] }}</td>
                 <td>{{ model[5] }}</td>
-                <td>{{ model[6] }}</td>
                 <td>
                     <input type="checkbox" class="default-model-checkbox" 
                            data-model-id="{{ model[1] }}:{{ model[2] }}" 
@@ -113,7 +106,6 @@
                 <th>Name</th>
                 <th>Version</th>
                 <th>Type</th>
-                <th>Description</th>
                 <th>Created At</th>
                 <th>Updated At</th>
                 <th>Default</th>
@@ -127,9 +119,8 @@
                 <td>{{ classifier[1] }}</td>
                 <td>{{ classifier[2] }}</td>
                 <td>{{ classifier[3] }}</td>
-                <td>{{ classifier[4] or 'N/A' }}</td>
+                <td>{{ classifier[4] }}</td>
                 <td>{{ classifier[5] }}</td>
-                <td>{{ classifier[6] }}</td>
                 <td>
                     <input type="checkbox" class="default-classifier-checkbox" 
                            data-classifier-id="{{ classifier[1] }}:{{ classifier[2] }}" 
