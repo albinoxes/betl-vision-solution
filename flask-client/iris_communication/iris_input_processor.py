@@ -73,6 +73,16 @@ class IrisInputProcessor:
         
         return df
     
+    def _transform_classifier_data_to_dataframe(self, data: Any, status_str: str) -> pd.DataFrame:
+        # Create DataFrame with timestamp and belt_status
+        rows = [{
+            'timestamp': status_str,
+            'belt_status': str(data)
+        }]
+        
+        df = pd.DataFrame(rows)
+        return df
+    
     def create_iris_csv_input(self, 
                              csv_name: str, 
                              project_title: str, 
@@ -161,12 +171,10 @@ class IrisInputProcessor:
                     # Write to CSV (with or without header based on mode)
                     df.to_csv(csv_filepath, mode=mode, index=False, header=create_new_file)
             else:
-                # Classifier results: simple format using csv writer
-                with open(csv_filepath, mode, newline='', encoding='utf-8') as csvfile:
-                    writer = csv.writer(csvfile)
-                    if create_new_file:
-                        writer.writerow(['ProjectTitle', 'FileCreationTimestamp', 'StatusTimestamp', 'Data'])
-                    writer.writerow([project_title, file_creation_str, status_str, str(data)])
+                # Classifier results: transform and write using pandas
+                df = self._transform_classifier_data_to_dataframe(data, status_str)
+                # Write to CSV (with or without header based on mode)
+                df.to_csv(csv_filepath, mode=mode, index=False, header=create_new_file)
             
             return str(csv_filepath)
             
