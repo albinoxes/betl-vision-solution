@@ -10,6 +10,8 @@ from computer_vision.classifier_image_processor import classifier_process_image
 from storage_data.store_data_manager import store_data_manager
 from sqlite.video_stream_sqlite_provider import video_stream_provider
 from iris_communication.iris_input_processor import iris_input_processor
+from iris_communication.sftp_processor import sftp_processor
+from sqlite.sftp_sqlite_provider import sftp_provider
 
 CAMERA_URL = "http://localhost:5001/video"
 
@@ -68,6 +70,22 @@ def process_video_stream_background(thread_id, url, model_id=None, classifier_id
     last_model_processing_time = 0  # Track last time model was run
     last_classifier_processing_time = 0  # Track last time classifier was run
     last_frame_save_time = 0  # Track last time frame was saved
+    
+    # Track previous CSV paths for SFTP upload
+    previous_model_csv_path = None
+    previous_classifier_csv_path = None
+    
+    # Get SFTP server info (use the first one if available)
+    sftp_server_info = None
+    try:
+        all_sftp_servers = sftp_provider.get_all_servers()
+        if all_sftp_servers and len(all_sftp_servers) > 0:
+            sftp_server_info = all_sftp_servers[0]
+            print(f"[SFTP] Using SFTP server: {sftp_server_info.server_name}")
+        else:
+            print(f"[SFTP] No SFTP server configured. Files will not be uploaded.")
+    except Exception as e:
+        print(f"[SFTP] Error loading SFTP server info: {e}")
     
     with thread_lock:
         if thread_id in active_threads:
@@ -174,13 +192,34 @@ def process_video_stream_background(thread_id, url, model_id=None, classifier_id
                                             frame_count += 1
                                             
                                             # Generate IRIS input CSV for result with processing timestamp
-                                            iris_input_processor.generate_iris_input_data(
+                                            csv_path = iris_input_processor.generate_iris_input_data(
                                                 project_settings=project_settings,
                                                 timestamp=processing_timestamp,
                                                 data=result,
                                                 folder_type='model',
                                                 image_filename=filename
                                             )
+                                            
+                                            # If a new CSV was created and we have a previous one, upload the previous via SFTP
+                                            if csv_path and csv_path != previous_model_csv_path:
+                                                if previous_model_csv_path and sftp_server_info:
+                                                    try:
+                                                        print(f"[SFTP] Uploading previous model CSV: {previous_model_csv_path}")
+                                                        upload_result = sftp_processor.transferData(
+                                                            sftp_server_info=sftp_server_info,
+                                                            file_path=previous_model_csv_path,
+                                                            project_settings=project_settings,
+                                                            folder_type='model'
+                                                        )
+                                                        if upload_result['success']:
+                                                            print(f"[SFTP] Successfully uploaded: {upload_result['remote_path']}")
+                                                        else:
+                                                            print(f"[SFTP] Upload failed: {upload_result.get('error', 'Unknown error')}")
+                                                    except Exception as e:
+                                                        print(f"[SFTP] Error uploading model CSV: {e}")
+                                                
+                                                # Update to current CSV path
+                                                previous_model_csv_path = csv_path
                                             
                                             # Update last processing time
                                             last_model_processing_time = current_time
@@ -199,12 +238,33 @@ def process_video_stream_background(thread_id, url, model_id=None, classifier_id
                                             frame_count += 1
                                             
                                             # Generate IRIS input CSV for belt status with processing timestamp
-                                            iris_input_processor.generate_iris_input_data(
+                                            csv_path = iris_input_processor.generate_iris_input_data(
                                                 project_settings=project_settings,
                                                 timestamp=processing_timestamp,
                                                 data=belt_status,
                                                 folder_type='classifier'
                                             )
+                                            
+                                            # If a new CSV was created and we have a previous one, upload the previous via SFTP
+                                            if csv_path and csv_path != previous_classifier_csv_path:
+                                                if previous_classifier_csv_path and sftp_server_info:
+                                                    try:
+                                                        print(f"[SFTP] Uploading previous classifier CSV: {previous_classifier_csv_path}")
+                                                        upload_result = sftp_processor.transferData(
+                                                            sftp_server_info=sftp_server_info,
+                                                            file_path=previous_classifier_csv_path,
+                                                            project_settings=project_settings,
+                                                            folder_type='classifier'
+                                                        )
+                                                        if upload_result['success']:
+                                                            print(f"[SFTP] Successfully uploaded: {upload_result['remote_path']}")
+                                                        else:
+                                                            print(f"[SFTP] Upload failed: {upload_result.get('error', 'Unknown error')}")
+                                                    except Exception as e:
+                                                        print(f"[SFTP] Error uploading classifier CSV: {e}")
+                                                
+                                                # Update to current CSV path
+                                                previous_classifier_csv_path = csv_path
                                             
                                             # Update last processing time
                                             last_classifier_processing_time = current_time
