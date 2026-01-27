@@ -7,7 +7,45 @@
 <h1>Project Settings</h1>
 <p>Configure your project information and settings.</p>
 
-<div class="settings-form-container">
+<div class="current-settings">
+    <h2>Current Settings</h2>
+    <table class="settings-table">
+        <tr>
+            <th>VM Number</th>
+            <td id="current_vm_number">-</td>
+        </tr>
+        <tr>
+            <th>Title</th>
+            <td id="current_title">-</td>
+        </tr>
+        <tr>
+            <th>Description</th>
+            <td id="current_description">-</td>
+        </tr>
+        <tr>
+            <th>IRIS Main Folder</th>
+            <td id="current_iris_main_folder">-</td>
+        </tr>
+        <tr>
+            <th>IRIS Classifier Subfolder</th>
+            <td id="current_iris_classifier_subfolder">-</td>
+        </tr>
+        <tr>
+            <th>IRIS Model Subfolder</th>
+            <td id="current_iris_model_subfolder">-</td>
+        </tr>
+        <tr>
+            <th>Last Updated</th>
+            <td id="current_updated_at">-</td>
+        </tr>
+    </table>
+    
+    <button onclick="toggleEditForm()" class="btn-toggle" id="toggleButton">
+        ▼ Edit Settings
+    </button>
+</div>
+
+<div class="settings-form-container" id="editFormContainer" style="display: none;">
     <form id="projectSettingsForm" onsubmit="saveProjectSettings(event)">
         <div class="form-group">
             <label for="vm_number">VM Number:</label>
@@ -54,43 +92,47 @@
     <div id="settingsMessage" class="message" style="display: none;"></div>
 </div>
 
-<div class="current-settings">
-    <h2>Current Settings</h2>
-    <table class="settings-table">
-        <tr>
-            <th>VM Number</th>
-            <td id="current_vm_number">-</td>
-        </tr>
-        <tr>
-            <th>Title</th>
-            <td id="current_title">-</td>
-        </tr>
-        <tr>
-            <th>Description</th>
-            <td id="current_description">-</td>
-        </tr>
-        <tr>
-            <th>IRIS Main Folder</th>
-            <td id="current_iris_main_folder">-</td>
-        </tr>
-        <tr>
-            <th>IRIS Classifier Subfolder</th>
-            <td id="current_iris_classifier_subfolder">-</td>
-        </tr>
-        <tr>
-            <th>IRIS Model Subfolder</th>
-            <td id="current_iris_model_subfolder">-</td>
-        </tr>
-        <tr>
-            <th>Last Updated</th>
-            <td id="current_updated_at">-</td>
-        </tr>
-    </table>
-</div>
+<style>
+    .btn-toggle {
+        margin-top: 20px;
+        padding: 10px 20px;
+        background-color: #007bff;
+        color: white;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 14px;
+    }
+    
+    .btn-toggle:hover {
+        background-color: #0056b3;
+    }
+    
+    .settings-form-container {
+        margin-top: 20px;
+        padding: 20px;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        background-color: #f9f9f9;
+    }
+</style>
 {% endblock %}
 
 {% block additional_scripts %}
 <script>
+    function toggleEditForm() {
+        const formContainer = document.getElementById('editFormContainer');
+        const toggleButton = document.getElementById('toggleButton');
+        
+        if (formContainer.style.display === 'none') {
+            formContainer.style.display = 'block';
+            toggleButton.textContent = '▲ Hide Edit Form';
+        } else {
+            formContainer.style.display = 'none';
+            toggleButton.textContent = '▼ Edit Settings';
+        }
+    }
+
     async function loadProjectSettings() {
         try {
             const response = await fetch('/project-settings');
