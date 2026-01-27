@@ -9,11 +9,8 @@ class IrisInputProcessor:
     Processor for generating IRIS input CSV files.
     """
     
-    # CSV interval in seconds - data accumulates in same file for this duration
-    CSV_INTERVAL_SECONDS = 60  # 1 minute by default
-    
     def __init__(self):
-        # Track active CSV files: {folder_type: {'path': str, 'start_time': datetime}}
+        # Track active CSV files: {folder_type: {'path': str, 'start_time': datetime, 'interval': int}}
         self.active_csv_files = {}
     
     def create_iris_csv_input(self, 
@@ -25,7 +22,8 @@ class IrisInputProcessor:
                              iris_main_folder: str,
                              subfolder: str,
                              folder_type: str = 'classifier',
-                             image_filename: str = '') -> Optional[str]:
+                             image_filename: str = '',
+                             csv_interval_seconds: int = 60) -> Optional[str]:
         """
         Create CSV file with IRIS input data.
         
@@ -39,6 +37,7 @@ class IrisInputProcessor:
             subfolder: Subfolder within the main IRIS folder (e.g., model or classifier subfolder)
             folder_type: Type of folder - 'model' or 'classifier'
             image_filename: Name of the stored image file (for model results)
+            csv_interval_seconds: Seconds to accumulate data in same CSV file
             
         Returns:
             Path to the created CSV file, or None if failed
@@ -60,7 +59,7 @@ class IrisInputProcessor:
                 active_info = self.active_csv_files[folder_type]
                 elapsed_seconds = (datetime.now() - active_info['start_time']).total_seconds()
                 
-                if elapsed_seconds >= self.CSV_INTERVAL_SECONDS:
+                if elapsed_seconds >= csv_interval_seconds:
                     # Interval elapsed, create new file
                     create_new_file = True
                     print(f"[IRIS] {folder_type.capitalize()} CSV interval elapsed ({elapsed_seconds:.1f}s), creating new file")
@@ -81,7 +80,8 @@ class IrisInputProcessor:
                 # Track this as the active CSV file
                 self.active_csv_files[folder_type] = {
                     'path': str(csv_filepath),
-                    'start_time': datetime.now()
+                    'start_time': datetime.now(),
+                    'interval': csv_interval_seconds
                 }
             
             # Format timestamps
@@ -157,6 +157,9 @@ class IrisInputProcessor:
             print(f"[IRIS] Skipping {folder_type} CSV - No main folder configured")
             return None
         
+        # Get CSV interval from project settings
+        csv_interval = getattr(project_settings, 'csv_interval_seconds', 60)
+        
         # Determine subfolder based on type
         if folder_type == 'model':
             subfolder = project_settings.iris_model_subfolder
@@ -186,7 +189,8 @@ class IrisInputProcessor:
             iris_main_folder=project_settings.iris_main_folder,
             subfolder=subfolder,
             folder_type=folder_type,
-            image_filename=image_filename
+            image_filename=image_filename,
+            csv_interval_seconds=csv_interval
         )
         
         if csv_path:

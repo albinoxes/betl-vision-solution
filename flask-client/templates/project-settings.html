@@ -35,6 +35,10 @@
             <td id="current_iris_model_subfolder">-</td>
         </tr>
         <tr>
+            <th>CSV Interval (seconds)</th>
+            <td id="current_csv_interval_seconds">-</td>
+        </tr>
+        <tr>
             <th>Last Updated</th>
             <td id="current_updated_at">-</td>
         </tr>
@@ -81,6 +85,12 @@
             <label for="iris_model_subfolder">IRIS Model Subfolder:</label>
             <input type="text" id="iris_model_subfolder" name="iris_model_subfolder">
             <small>Subfolder path for IRIS models</small>
+        </div>
+        
+        <div class="form-group">
+            <label for="csv_interval_seconds">CSV Interval (seconds):</label>
+            <input type="number" id="csv_interval_seconds" name="csv_interval_seconds" min="1" value="60">
+            <small>Time interval (in seconds) to accumulate data in same CSV file</small>
         </div>
         
         <div class="form-actions">
@@ -415,6 +425,7 @@
                 document.getElementById('iris_main_folder').value = settings.iris_main_folder || '';
                 document.getElementById('iris_classifier_subfolder').value = settings.iris_classifier_subfolder || '';
                 document.getElementById('iris_model_subfolder').value = settings.iris_model_subfolder || '';
+                document.getElementById('csv_interval_seconds').value = settings.csv_interval_seconds || 60;
                 
                 // Populate current settings display
                 document.getElementById('current_vm_number').textContent = settings.vm_number || '-';
@@ -423,6 +434,7 @@
                 document.getElementById('current_iris_main_folder').textContent = settings.iris_main_folder || '-';
                 document.getElementById('current_iris_classifier_subfolder').textContent = settings.iris_classifier_subfolder || '-';
                 document.getElementById('current_iris_model_subfolder').textContent = settings.iris_model_subfolder || '-';
+                document.getElementById('current_csv_interval_seconds').textContent = settings.csv_interval_seconds || '60';
                 
                 if (settings.updated_at) {
                     const date = new Date(settings.updated_at);
@@ -445,7 +457,8 @@
             description: document.getElementById('description').value,
             iris_main_folder: document.getElementById('iris_main_folder').value,
             iris_classifier_subfolder: document.getElementById('iris_classifier_subfolder').value,
-            iris_model_subfolder: document.getElementById('iris_model_subfolder').value
+            iris_model_subfolder: document.getElementById('iris_model_subfolder').value,
+            csv_interval_seconds: parseInt(document.getElementById('csv_interval_seconds').value) || 60
         };
 
         try {

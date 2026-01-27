@@ -28,7 +28,7 @@ def get_project_settings():
 def update_project_settings():
     """
     Update project settings.
-    Expects JSON: { "vm_number": "...", "title": "...", "description": "...", "iris_main_folder": "...", "iris_classifier_subfolder": "...", "iris_model_subfolder": "..." }
+    Expects JSON: { "vm_number": "...", "title": "...", "description": "...", "iris_main_folder": "...", "iris_classifier_subfolder": "...", "iris_model_subfolder": "...", "csv_interval_seconds": 60 }
     """
     data = request.get_json()
     
@@ -38,13 +38,14 @@ def update_project_settings():
     iris_main_folder = data.get('iris_main_folder', '').strip()
     iris_classifier_subfolder = data.get('iris_classifier_subfolder', '').strip()
     iris_model_subfolder = data.get('iris_model_subfolder', '').strip()
+    csv_interval_seconds = int(data.get('csv_interval_seconds', 60))
     
     if not vm_number or not title:
         return jsonify({'error': 'vm_number and title are required'}), 400
     
     success = provider.update_settings(vm_number, title, description, 
                                       iris_main_folder, iris_classifier_subfolder, 
-                                      iris_model_subfolder)
+                                      iris_model_subfolder, csv_interval_seconds)
     
     if success:
         return jsonify({'message': 'Settings updated successfully', 'settings': provider.get_settings_dict()})
