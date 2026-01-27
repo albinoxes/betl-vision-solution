@@ -14,6 +14,7 @@ class ProjectSettings:
     iris_classifier_subfolder: Optional[str] = None
     iris_model_subfolder: Optional[str] = None
     csv_interval_seconds: int = 60
+    image_processing_interval: float = 1.0
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
     
@@ -28,6 +29,7 @@ class ProjectSettings:
             'iris_classifier_subfolder': self.iris_classifier_subfolder,
             'iris_model_subfolder': self.iris_model_subfolder,
             'csv_interval_seconds': self.csv_interval_seconds,
+            'image_processing_interval': self.image_processing_interval,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None
         }
@@ -50,6 +52,7 @@ class ProjectSettingsSQLiteProvider:
                     iris_classifier_subfolder TEXT,
                     iris_model_subfolder TEXT,
                     csv_interval_seconds INTEGER DEFAULT 60,
+                    image_processing_interval REAL DEFAULT 1.0,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
@@ -59,24 +62,24 @@ class ProjectSettingsSQLiteProvider:
             cursor.execute('SELECT COUNT(*) FROM project_settings')
             if cursor.fetchone()[0] == 0:
                 cursor.execute('''
-                    INSERT INTO project_settings (vm_number, title, description, iris_main_folder, iris_classifier_subfolder, iris_model_subfolder, csv_interval_seconds)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                ''', ('VM001', 'Belt Vision Project', 'Default project configuration', '', '', '', 60))
+                    INSERT INTO project_settings (vm_number, title, description, iris_main_folder, iris_classifier_subfolder, iris_model_subfolder, csv_interval_seconds, image_processing_interval)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ''', ('VM001', 'Belt Vision Project', 'Default project configuration', '', '', '', 60, 1.0))
             conn.commit()
 
     def get_current_settings(self) -> Optional[ProjectSettings]:
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute('''
-                SELECT id, vm_number, title, description, iris_main_folder, iris_classifier_subfolder, iris_model_subfolder, csv_interval_seconds, created_at, updated_at
+                SELECT id, vm_number, title, description, iris_main_folder, iris_classifier_subfolder, iris_model_subfolder, csv_interval_seconds, image_processing_interval, created_at, updated_at
                 FROM project_settings
                 ORDER BY id DESC
                 LIMIT 1
             ''')
             row = cursor.fetchone()
             if row:
-                created_at = datetime.fromisoformat(row[8]) if row[8] else None
-                updated_at = datetime.fromisoformat(row[9]) if row[9] else None
+                created_at = datetime.fromisoformat(row[9]) if row[9] else None
+                updated_at = datetime.fromisoformat(row[10]) if row[10] else None
                 return ProjectSettings(
                     id=row[0],
                     vm_number=row[1],
@@ -86,6 +89,7 @@ class ProjectSettingsSQLiteProvider:
                     iris_classifier_subfolder=row[5],
                     iris_model_subfolder=row[6],
                     csv_interval_seconds=row[7] if row[7] is not None else 60,
+                    image_processing_interval=row[8] if row[8] is not None else 1.0,
                     created_at=created_at,
                     updated_at=updated_at
                 )
@@ -93,7 +97,8 @@ class ProjectSettingsSQLiteProvider:
 
     def update_settings(self, vm_number: str, title: str, description: str, 
                         iris_main_folder: str = '', iris_classifier_subfolder: str = '', 
-                        iris_model_subfolder: str = '', csv_interval_seconds: int = 60) -> bool:
+                        iris_model_subfolder: str = '', csv_interval_seconds: int = 60,
+                        image_processing_interval: float = 1.0) -> bool:
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute('SELECT id FROM project_settings ORDER BY id DESC LIMIT 1')
@@ -103,17 +108,18 @@ class ProjectSettingsSQLiteProvider:
                 cursor.execute('''
                     UPDATE project_settings
                     SET vm_number = ?, title = ?, description = ?, iris_main_folder = ?, 
-                        iris_classifier_subfolder = ?, iris_model_subfolder = ?, csv_interval_seconds = ?, updated_at = CURRENT_TIMESTAMP
+                        iris_classifier_subfolder = ?, iris_model_subfolder = ?, csv_interval_seconds = ?, 
+                        image_processing_interval = ?, updated_at = CURRENT_TIMESTAMP
                     WHERE id = ?
                 ''', (vm_number, title, description, iris_main_folder, iris_classifier_subfolder, 
-                      iris_model_subfolder, csv_interval_seconds, existing[0]))
+                      iris_model_subfolder, csv_interval_seconds, image_processing_interval, existing[0]))
             else:
                 cursor.execute('''
                     INSERT INTO project_settings (vm_number, title, description, iris_main_folder, 
-                                                   iris_classifier_subfolder, iris_model_subfolder, csv_interval_seconds)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                                                   iris_classifier_subfolder, iris_model_subfolder, csv_interval_seconds, image_processing_interval)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 ''', (vm_number, title, description, iris_main_folder, iris_classifier_subfolder, 
-                      iris_model_subfolder, csv_interval_seconds))
+                      iris_model_subfolder, csv_interval_seconds, image_processing_interval))
             
             conn.commit()
             return True

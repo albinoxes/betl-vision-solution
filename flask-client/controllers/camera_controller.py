@@ -58,8 +58,11 @@ def process_video_stream_background(thread_id, url, model_id=None, classifier_id
         print(f"[IRIS] Main folder: {project_settings.iris_main_folder}")
         print(f"[IRIS] Model subfolder: {project_settings.iris_model_subfolder}")
         print(f"[IRIS] Classifier subfolder: {project_settings.iris_classifier_subfolder}")
+        print(f"[IRIS] Image processing interval: {project_settings.image_processing_interval}s")
+        processing_interval = project_settings.image_processing_interval
     else:
         print(f"[IRIS] Warning: No project settings found!")
+        processing_interval = PROCESSING_INTERVAL_SECONDS  # Fallback to hardcoded value
     
     frame_count = 0
     last_model_processing_time = 0  # Track last time model was run
@@ -156,7 +159,7 @@ def process_video_stream_background(thread_id, url, model_id=None, classifier_id
                                 if model is not None:
                                     # Check if processing interval has elapsed
                                     current_time = time.time()
-                                    if current_time - last_model_processing_time >= PROCESSING_INTERVAL_SECONDS:
+                                    if current_time - last_model_processing_time >= processing_interval:
                                         print(f"[Processing] Model processing frame at {current_time:.2f}, interval: {current_time - last_model_processing_time:.2f}s")
                                         try:
                                             # Use processing time for CSV timestamp
@@ -181,7 +184,7 @@ def process_video_stream_background(thread_id, url, model_id=None, classifier_id
                                 if classifier_id:
                                     # Check if processing interval has elapsed
                                     current_time = time.time()
-                                    if current_time - last_classifier_processing_time >= PROCESSING_INTERVAL_SECONDS:
+                                    if current_time - last_classifier_processing_time >= processing_interval:
                                         print(f"[Processing] Classifier processing frame at {current_time:.2f}, interval: {current_time - last_classifier_processing_time:.2f}s")
                                         try:
                                             # Use processing time for CSV timestamp
