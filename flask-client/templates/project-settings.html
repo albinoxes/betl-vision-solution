@@ -27,6 +27,24 @@
             <small>Brief description of your project</small>
         </div>
         
+        <div class="form-group">
+            <label for="iris_main_folder">IRIS Main Folder:</label>
+            <input type="text" id="iris_main_folder" name="iris_main_folder">
+            <small>Main folder path for IRIS data</small>
+        </div>
+        
+        <div class="form-group">
+            <label for="iris_classifier_subfolder">IRIS Classifier Subfolder:</label>
+            <input type="text" id="iris_classifier_subfolder" name="iris_classifier_subfolder">
+            <small>Subfolder path for IRIS classifiers</small>
+        </div>
+        
+        <div class="form-group">
+            <label for="iris_model_subfolder">IRIS Model Subfolder:</label>
+            <input type="text" id="iris_model_subfolder" name="iris_model_subfolder">
+            <small>Subfolder path for IRIS models</small>
+        </div>
+        
         <div class="form-actions">
             <button type="submit" class="btn-save">Save Settings</button>
             <button type="button" onclick="loadProjectSettings()" class="btn-refresh">Reset Form</button>
@@ -52,6 +70,18 @@
             <td id="current_description">-</td>
         </tr>
         <tr>
+            <th>IRIS Main Folder</th>
+            <td id="current_iris_main_folder">-</td>
+        </tr>
+        <tr>
+            <th>IRIS Classifier Subfolder</th>
+            <td id="current_iris_classifier_subfolder">-</td>
+        </tr>
+        <tr>
+            <th>IRIS Model Subfolder</th>
+            <td id="current_iris_model_subfolder">-</td>
+        </tr>
+        <tr>
             <th>Last Updated</th>
             <td id="current_updated_at">-</td>
         </tr>
@@ -71,11 +101,17 @@
                 document.getElementById('vm_number').value = settings.vm_number || '';
                 document.getElementById('title').value = settings.title || '';
                 document.getElementById('description').value = settings.description || '';
+                document.getElementById('iris_main_folder').value = settings.iris_main_folder || '';
+                document.getElementById('iris_classifier_subfolder').value = settings.iris_classifier_subfolder || '';
+                document.getElementById('iris_model_subfolder').value = settings.iris_model_subfolder || '';
                 
                 // Populate current settings display
                 document.getElementById('current_vm_number').textContent = settings.vm_number || '-';
                 document.getElementById('current_title').textContent = settings.title || '-';
                 document.getElementById('current_description').textContent = settings.description || '-';
+                document.getElementById('current_iris_main_folder').textContent = settings.iris_main_folder || '-';
+                document.getElementById('current_iris_classifier_subfolder').textContent = settings.iris_classifier_subfolder || '-';
+                document.getElementById('current_iris_model_subfolder').textContent = settings.iris_model_subfolder || '-';
                 
                 if (settings.updated_at) {
                     const date = new Date(settings.updated_at);
@@ -95,7 +131,10 @@
         const formData = {
             vm_number: document.getElementById('vm_number').value,
             title: document.getElementById('title').value,
-            description: document.getElementById('description').value
+            description: document.getElementById('description').value,
+            iris_main_folder: document.getElementById('iris_main_folder').value,
+            iris_classifier_subfolder: document.getElementById('iris_classifier_subfolder').value,
+            iris_model_subfolder: document.getElementById('iris_model_subfolder').value
         };
 
         try {
