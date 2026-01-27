@@ -1,5 +1,6 @@
 import cv2
 import os
+import time
 from flask import Flask, Response, jsonify
 
 app = Flask(__name__)
@@ -7,32 +8,46 @@ app = Flask(__name__)
 # Path to the mock video file
 MOCK_VIDEO_PATH = os.path.join(os.path.dirname(__file__), 'mock', 'test-video.avi')
 
+# Configuration
+TARGET_FPS = 30  # Limit frame rate to reduce CPU usage
+
 def generate_video_stream():
-    """Generate MJPEG stream from the mock video file."""
+    """Generate MJPEG stream from the mock video file with FPS limiting."""
+    frame_delay = 1.0 / TARGET_FPS  # Time between frames
+    
     while True:
         cap = cv2.VideoCapture(MOCK_VIDEO_PATH)
         if not cap.isOpened():
             print(f"Error: Could not open video file {MOCK_VIDEO_PATH}")
             break
         
-        while True:
-            ret, frame = cap.read()
-            if not ret:
-                # Loop the video by breaking and restarting
-                break
+        try:
+            last_frame_time = 0
             
-            # Encode frame as JPEG
-            _, buffer = cv2.imencode('.jpg', frame)
-            frame_bytes = buffer.tobytes()
-            
-            # Yield frame in multipart format (same as legacy camera server)
-            yield (b'--frame\r\n'
-                   b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
-            
-            # Add small delay to control frame rate
-            cv2.waitKey(33)  # ~30 fps
+            while True:
+                current_time = time.time()
+                
+                # Throttle frame rate
+                if current_time - last_frame_time < frame_delay:
+                    time.sleep(frame_delay - (current_time - last_frame_time))
+                
+                ret, frame = cap.read()
+                if not ret:
+                    # Loop the video by breaking and restarting
+                    break
+                
+                # Encode frame as JPEG with quality setting
+                _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+                frame_bytes = buffer.tobytes()
+                
+                last_frame_time = time.time()
+                
+                # Yield frame in multipart format (same as legacy camera server)
+                yield (b'--frame\r\n'
+                       b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
         
-        cap.release()
+        finally:
+            cap.release()
 
 @app.route('/video/simulator')
 def video_simulator():

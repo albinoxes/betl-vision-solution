@@ -38,16 +38,11 @@ def process_video_stream_background(thread_id, url, model_id=None, classifier_id
         classifier_id: Optional classifier identifier (name:version)
         settings_id: Optional settings identifier (name)
     """
-    # Load model and settings once
+    # Lazy-load models only when needed (not at thread start)
+    # This reduces memory usage when models aren't actively processing
     model = None
     settings = None
-    if model_id:
-        from computer_vision.ml_model_image_processor import get_model_from_database, get_camera_settings
-        try:
-            model = get_model_from_database(model_id)
-            settings = get_camera_settings(settings_id)
-        except Exception as e:
-            print(f"Error loading model or settings: {e}")
+    model_loaded = False
     
     # Get project title and settings once before processing frames
     from sqlite.project_settings_sqlite_provider import project_settings_provider
@@ -179,6 +174,20 @@ def process_video_stream_background(thread_id, url, model_id=None, classifier_id
                                     except Exception as e:
                                         print(f"Error saving frame: {e}")
                                 
+                                # Lazy-load model only when we need to process
+                                if model_id and not model_loaded:
+                                    from computer_vision.ml_model_image_processor import get_model_from_database, get_camera_settings
+                                    try:
+                                        print(f"[Model] Lazy-loading model: {model_id}")
+                                        model = get_model_from_database(model_id)
+                                        settings = get_camera_settings(settings_id)
+                                        model_loaded = True
+                                        print(f"[Model] Model loaded successfully")
+                                    except Exception as e:
+                                        print(f"Error loading model or settings: {e}")
+                                        model = None
+                                        settings = None
+                                
                                 # Process with ML models if specified
                                 if model is not None:
                                     # Check if processing interval has elapsed
@@ -299,6 +308,18 @@ def process_video_stream_background(thread_id, url, model_id=None, classifier_id
                 # Don't retry on errors - just stop the thread
                 break
     finally:
+        # Clean up resources
+        print(f"[Cleanup] Stopping thread {thread_id}")
+        
+        # Explicitly delete model to free memory
+        if model is not None:
+            try:
+                del model
+                del settings
+                print(f"[Cleanup] ML model unloaded from memory")
+            except:
+                pass
+        
         # Clean up session tracking
         try:
             store_data_manager.end_session(thread_id)
@@ -639,21 +660,32 @@ def stop_thread():
     session_obj = None
     
     with thread_lock:
-        if thread_id in active_threads:
-            active_threads[thread_id]['running'] = False
-            thread_obj = active_threads[thread_id].get('thread')
-            session_obj = active_threads[thread_id].get('session')
+        if thread_id not in active_threads:
+            return jsonify({'error': 'Thread not found'}), 404
+        
+        active_threads[thread_id]['running'] = False
+        active_threads[thread_id]['status'] = 'stopping'
+        thread_obj = active_threads[thread_id].get('thread')
+        session_obj = active_threads[thread_id].get('session')
     
     # Force close the session to interrupt any blocking reads
     if session_obj:
         try:
             session_obj.close()
-        except:
-            pass
+            print(f"Closed session for thread {thread_id}")
+        except Exception as e:
+            print(f"Error closing session: {e}")
     
-    # Wait for thread to actually stop (max 3 seconds)
+    # Wait for thread to actually stop (max 5 seconds)
     if thread_obj and thread_obj.is_alive():
-        thread_obj.join(timeout=3)
+        thread_obj.join(timeout=5)
+        if thread_obj.is_alive():
+            print(f"Warning: Thread {thread_id} did not stop gracefully")
+    
+    # Clean up thread from active_threads after stopping
+    with thread_lock:
+        if thread_id in active_threads:
+            active_threads[thread_id]['status'] = 'stopped'
     
     return jsonify({'success': True})
 
@@ -681,3 +713,34 @@ def get_active_threads():
             })
     
     return jsonify(threads_info)
+
+@camera_bp.route('/system-resources')
+def get_system_resources():
+    """Monitor system resource usage for debugging performance issues."""
+    import psutil
+    import os
+    
+    # Get process info
+    process = psutil.Process(os.getpid())
+    
+    # Memory info
+    memory_info = process.memory_info()
+    memory_mb = memory_info.rss / 1024 / 1024
+    
+    # CPU info
+    cpu_percent = process.cpu_percent(interval=0.1)
+    
+    # Thread count
+    thread_count = process.num_threads()
+    
+    # Active processing threads
+    with thread_lock:
+        active_count = sum(1 for t in active_threads.values() if t['running'])
+    
+    return jsonify({
+        'memory_mb': round(memory_mb, 2),
+        'cpu_percent': cpu_percent,
+        'thread_count': thread_count,
+        'active_processing_threads': active_count,
+        'total_threads_tracked': len(active_threads)
+    })

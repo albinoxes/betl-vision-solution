@@ -57,11 +57,21 @@ def camera_capture_thread(device_id):
     
     print(f'Camera capture thread started for device {device_id}')
     
+    # FPS limiting
+    target_fps = 30
+    frame_delay = 1.0 / target_fps
+    last_frame_time = 0
+    
     try:
         while True:
             with streams_lock:
                 if device_id not in shared_streams or not shared_streams[device_id].get('running', False):
                     break
+            
+            # Throttle frame rate
+            current_time = time.time()
+            if current_time - last_frame_time < frame_delay:
+                time.sleep(frame_delay - (current_time - last_frame_time))
             
             try:
                 image_set = transfer.collect_received_image_set()
@@ -73,7 +83,7 @@ def camera_capture_thread(device_id):
                 img2d = image_set.get_pixel_data(0, force8bit=True)
                 img = Image.fromarray(img2d)
                 buffer = io.BytesIO()
-                img.save(buffer, format='JPEG')
+                img.save(buffer, format='JPEG', quality=85)
                 frame = buffer.getvalue()
                 
                 # Update shared frame
@@ -81,6 +91,8 @@ def camera_capture_thread(device_id):
                     if device_id in shared_streams:
                         shared_streams[device_id]['frame'] = frame
                         shared_streams[device_id]['last_update'] = time.time()
+                
+                last_frame_time = time.time()
                         
             except Exception as e:
                 print(f'Error capturing frame from device {device_id}: {e}')
