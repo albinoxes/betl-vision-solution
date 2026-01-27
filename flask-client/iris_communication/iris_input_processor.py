@@ -16,6 +16,63 @@ class IrisInputProcessor:
         # Track last processing time for calculating time_diff and images_per_second
         self.last_processing_time = {}
     
+    def _calculate_timing_metrics(self, folder_type: str) -> tuple[float, float]:
+        current_time = datetime.now()
+        time_diff = 0.0
+        images_per_second = 0.0
+        
+        if folder_type in self.last_processing_time:
+            time_diff = (current_time - self.last_processing_time[folder_type]).total_seconds()
+            if time_diff > 0:
+                images_per_second = 1.0 / time_diff
+        
+        self.last_processing_time[folder_type] = current_time
+        return time_diff, images_per_second
+    
+    def _transform_model_data_to_dataframe(self, data: Any, status_str: str, image_filename: str, 
+                                          time_diff: float, images_per_second: float) -> Optional[pd.DataFrame]:
+        if not isinstance(data, list) or len(data) < 3:
+            return None
+        
+        image_data = data[0]
+        xyxy_data = data[1]
+        particles = data[2]
+        
+        # Prepare data rows
+        rows = []
+        for i, particle in enumerate(particles):
+            # Get corresponding bounding box
+            bbox = xyxy_data[i] if i < len(xyxy_data) else []
+            
+            rows.append({
+                'timestamp': status_str,
+                'image': image_filename if image_filename else 'frame',
+                'xyxy': bbox,
+                'conf': getattr(particle, 'conf', 0.0),
+                'width_px': getattr(particle, 'width_px', 0),
+                'height_px': getattr(particle, 'height_px', 0),
+                'width_mm': getattr(particle, 'width_mm', 0.0),
+                'height_mm': getattr(particle, 'height_mm', 0.0),
+                'max_d_mm': getattr(particle, 'max_d_mm', 0.0),
+                'volume_est': getattr(particle, 'volume_est', 0.0),
+                'time_diff': time_diff,
+                'images_per_second': images_per_second
+            })
+        
+        # Create DataFrame
+        df = pd.DataFrame(rows)
+        
+        # Format xyxy as comma-separated string
+        df['xyxy'] = df['xyxy'].apply(lambda x: ', '.join(map(str, x)) if isinstance(x, (list, tuple)) else str(x))
+        
+        # Format confidence with 2 decimal places
+        df['conf'] = df['conf'].apply(lambda x: '{:.2f}'.format(x) if isinstance(x, (int, float)) else str(x))
+        
+        # Format images_per_second with 2 decimal places
+        df['images_per_second'] = df['images_per_second'].apply(lambda x: '{:.2f}'.format(x))
+        
+        return df
+    
     def create_iris_csv_input(self, 
                              csv_name: str, 
                              project_title: str, 
@@ -95,58 +152,12 @@ class IrisInputProcessor:
             mode = 'w' if create_new_file else 'a'
             
             if folder_type == 'model':
-                # Model results: extract detection data from result format [image, xyxy, particles]
-                # Calculate time_diff and images_per_second
-                current_time = datetime.now()
-                time_diff = 0.0
-                images_per_second = 0.0
+                # Model results: transform and write using pandas
+                time_diff, images_per_second = self._calculate_timing_metrics(folder_type)
+                df = self._transform_model_data_to_dataframe(data, status_str, image_filename, 
+                                                            time_diff, images_per_second)
                 
-                if folder_type in self.last_processing_time:
-                    time_diff = (current_time - self.last_processing_time[folder_type]).total_seconds()
-                    if time_diff > 0:
-                        images_per_second = 1.0 / time_diff
-                
-                self.last_processing_time[folder_type] = current_time
-                
-                # Extract particles from result
-                if isinstance(data, list) and len(data) >= 3:
-                    image_data = data[0]
-                    xyxy_data = data[1]
-                    particles = data[2]
-                    
-                    # Prepare data rows for pandas
-                    rows = []
-                    for i, particle in enumerate(particles):
-                        # Get corresponding bounding box
-                        bbox = xyxy_data[i] if i < len(xyxy_data) else []
-                        
-                        rows.append({
-                            'timestamp': status_str,
-                            'image': image_filename if image_filename else 'frame',
-                            'xyxy': bbox,
-                            'conf': getattr(particle, 'conf', 0.0),
-                            'width_px': getattr(particle, 'width_px', 0),
-                            'height_px': getattr(particle, 'height_px', 0),
-                            'width_mm': getattr(particle, 'width_mm', 0.0),
-                            'height_mm': getattr(particle, 'height_mm', 0.0),
-                            'max_d_mm': getattr(particle, 'max_d_mm', 0.0),
-                            'volume_est': getattr(particle, 'volume_est', 0.0),
-                            'time_diff': time_diff,
-                            'images_per_second': images_per_second
-                        })
-                    
-                    # Create DataFrame and format
-                    df = pd.DataFrame(rows)
-                    
-                    # Format xyxy as comma-separated string
-                    df['xyxy'] = df['xyxy'].apply(lambda x: ', '.join(map(str, x)) if isinstance(x, (list, tuple)) else str(x))
-                    
-                    # Format confidence with 2 decimal places
-                    df['conf'] = df['conf'].apply(lambda x: '{:.2f}'.format(x) if isinstance(x, (int, float)) else str(x))
-                    
-                    # Format images_per_second with 2 decimal places
-                    df['images_per_second'] = df['images_per_second'].apply(lambda x: '{:.2f}'.format(x))
-                    
+                if df is not None:
                     # Write to CSV (with or without header based on mode)
                     df.to_csv(csv_filepath, mode=mode, index=False, header=create_new_file)
             else:
