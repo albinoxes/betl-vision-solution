@@ -9,8 +9,12 @@ from computer_vision.ml_model_image_processor import object_process_image, Camer
 from computer_vision.classifier_image_processor import classifier_process_image
 from storage_data.store_data_manager import store_data_manager
 from sqlite.video_stream_sqlite_provider import video_stream_provider
+from iris_communication.iris_input_processor import iris_input_processor
 
 CAMERA_URL = "http://localhost:5001/video"
+
+# Processing interval in seconds - controls how often frames are processed with ML models
+PROCESSING_INTERVAL_SECONDS = 1.0  # Process every 1 second
 
 # Global dictionary to track active video processing threads
 active_threads = {}
@@ -43,10 +47,28 @@ def process_video_stream_background(thread_id, url, model_id=None, classifier_id
         except Exception as e:
             print(f"Error loading model or settings: {e}")
     
-    # Get project title once before processing frames
-    project_title = store_data_manager.get_project_title()
+    # Get project title and settings once before processing frames
+    from sqlite.project_settings_sqlite_provider import project_settings_provider
+    project_settings = project_settings_provider.get_project_settings()
+    project_title = project_settings.title if project_settings else "default"
+    
+    # Debug logging for IRIS configuration
+    if project_settings:
+        print(f"[IRIS] Project settings loaded: {project_title}")
+        print(f"[IRIS] Main folder: {project_settings.iris_main_folder}")
+        print(f"[IRIS] Model subfolder: {project_settings.iris_model_subfolder}")
+        print(f"[IRIS] Classifier subfolder: {project_settings.iris_classifier_subfolder}")
+        print(f"[IRIS] Image processing interval: {project_settings.image_processing_interval}s")
+        processing_interval = project_settings.image_processing_interval
+    else:
+        print(f"[IRIS] Warning: No project settings found!")
+        processing_interval = PROCESSING_INTERVAL_SECONDS  # Fallback to hardcoded value
     
     frame_count = 0
+    last_model_processing_time = 0  # Track last time model was run
+    last_classifier_processing_time = 0  # Track last time classifier was run
+    last_frame_save_time = 0  # Track last time frame was saved
+    
     with thread_lock:
         if thread_id in active_threads:
             active_threads[thread_id]['status'] = 'running'
@@ -112,42 +134,82 @@ def process_video_stream_background(thread_id, url, model_id=None, classifier_id
                             img2d = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
                             
                             if img2d is not None:
-                                # Save frame to storage directory and database
-                                try:
-                                    timestamp = datetime.now()
-                                    filename = f"frame_{timestamp.strftime('%Y%m%d_%H%M%S_%f')}.jpg"
-                                    
-                                    # Save the frame to disk with session tracking
-                                    filepath = store_data_manager.save_frame(img2d, session_key=thread_id, filename=filename)
-                                    
-                                    if filepath:
-                                        # Insert frame record into database with project_id_camera_id format
-                                        try:
-                                            full_camera_id = f"{project_title}_{thread_id}"
-                                            video_stream_provider.insert_segment(
-                                                camera_id=full_camera_id,
-                                                start_time=timestamp,
-                                                file_path=filepath
-                                            )
-                                        except Exception as e:
-                                            print(f"Error inserting frame record to database: {e}")
-                                except Exception as e:
-                                    print(f"Error saving frame: {e}")
+                                # Save frame to storage directory and database at the same interval as processing
+                                current_time = time.time()
+                                if current_time - last_frame_save_time >= processing_interval:
+                                    try:
+                                        timestamp = datetime.now()
+                                        filename = f"frame_{timestamp.strftime('%Y%m%d_%H%M%S_%f')}.jpg"
+                                        
+                                        # Save the frame to disk with session tracking
+                                        filepath = store_data_manager.save_frame(img2d, session_key=thread_id, filename=filename)
+                                        
+                                        if filepath:
+                                            # Insert frame record into database with project_id_camera_id format
+                                            try:
+                                                full_camera_id = f"{project_title}_{thread_id}"
+                                                video_stream_provider.insert_segment(
+                                                    camera_id=full_camera_id,
+                                                    start_time=timestamp,
+                                                    file_path=filepath
+                                                )
+                                            except Exception as e:
+                                                print(f"Error inserting frame record to database: {e}")
+                                        
+                                        # Update last frame save time
+                                        last_frame_save_time = current_time
+                                    except Exception as e:
+                                        print(f"Error saving frame: {e}")
                                 
                                 # Process with ML models if specified
                                 if model is not None:
-                                    try:
-                                        result = object_process_image(img2d.copy(), model=model, settings=settings)
-                                        frame_count += 1
-                                    except Exception as e:
-                                        print(f"Error processing with model: {e}")
+                                    # Check if processing interval has elapsed
+                                    current_time = time.time()
+                                    if current_time - last_model_processing_time >= processing_interval:
+                                        print(f"[Processing] Model processing frame at {current_time:.2f}, interval: {current_time - last_model_processing_time:.2f}s")
+                                        try:
+                                            # Use processing time for CSV timestamp
+                                            processing_timestamp = datetime.now()
+                                            result = object_process_image(img2d.copy(), model=model, settings=settings)
+                                            frame_count += 1
+                                            
+                                            # Generate IRIS input CSV for result with processing timestamp
+                                            iris_input_processor.generate_iris_input_data(
+                                                project_settings=project_settings,
+                                                timestamp=processing_timestamp,
+                                                data=result,
+                                                folder_type='model',
+                                                image_filename=filename
+                                            )
+                                            
+                                            # Update last processing time
+                                            last_model_processing_time = current_time
+                                        except Exception as e:
+                                            print(f"Error processing with model: {e}")
                                 
                                 if classifier_id:
-                                    try:
-                                        belt_status = classifier_process_image(img2d.copy(), classifier_id=classifier_id)
-                                        frame_count += 1
-                                    except Exception as e:
-                                        print(f"Error processing with classifier: {e}")
+                                    # Check if processing interval has elapsed
+                                    current_time = time.time()
+                                    if current_time - last_classifier_processing_time >= processing_interval:
+                                        print(f"[Processing] Classifier processing frame at {current_time:.2f}, interval: {current_time - last_classifier_processing_time:.2f}s")
+                                        try:
+                                            # Use processing time for CSV timestamp
+                                            processing_timestamp = datetime.now()
+                                            belt_status = classifier_process_image(img2d.copy(), classifier_id=classifier_id)
+                                            frame_count += 1
+                                            
+                                            # Generate IRIS input CSV for belt status with processing timestamp
+                                            iris_input_processor.generate_iris_input_data(
+                                                project_settings=project_settings,
+                                                timestamp=processing_timestamp,
+                                                data=belt_status,
+                                                folder_type='classifier'
+                                            )
+                                            
+                                            # Update last processing time
+                                            last_classifier_processing_time = current_time
+                                        except Exception as e:
+                                            print(f"Error processing with classifier: {e}")
                                 
                                 # Update frame count
                                 with thread_lock:
