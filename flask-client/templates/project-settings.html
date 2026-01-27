@@ -92,6 +92,54 @@
     <div id="settingsMessage" class="message" style="display: none;"></div>
 </div>
 
+<div class="model-status-section">
+    <h2>Model Statuses</h2>
+    <table class="settings-table" id="statusTable">
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Name</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody id="statusTableBody">
+            <tr>
+                <td colspan="3">No statuses found</td>
+            </tr>
+        </tbody>
+    </table>
+    
+    <button onclick="toggleStatusForm()" class="btn-toggle" id="toggleStatusButton">
+        ▼ Add New Status
+    </button>
+    
+    <div class="status-form-container" id="statusFormContainer" style="display: none;">
+        <h3 id="statusFormTitle">Add New Status</h3>
+        <form id="statusForm" onsubmit="saveStatus(event)">
+            <input type="hidden" id="originalStatusId" value="">
+            
+            <div class="form-group">
+                <label for="status_id">ID:</label>
+                <input type="number" id="status_id" name="status_id" required>
+                <small>Unique identifier for the status</small>
+            </div>
+            
+            <div class="form-group">
+                <label for="status_name">Name:</label>
+                <input type="text" id="status_name" name="status_name" required>
+                <small>Display name for the status</small>
+            </div>
+            
+            <div class="form-actions">
+                <button type="submit" class="btn-save">Save Status</button>
+                <button type="button" onclick="cancelStatusEdit()" class="btn-refresh">Cancel</button>
+            </div>
+        </form>
+        
+        <div id="statusMessage" class="message" style="display: none;"></div>
+    </div>
+</div>
+
 <style>
     .btn-toggle {
         margin-top: 20px;
@@ -115,11 +163,232 @@
         border-radius: 4px;
         background-color: #f9f9f9;
     }
+    
+    .model-status-section {
+        margin-top: 40px;
+        padding-top: 20px;
+        border-top: 2px solid #ddd;
+    }
+    
+    .status-form-container {
+        margin-top: 20px;
+        padding: 20px;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        background-color: #f9f9f9;
+    }
+    
+    .settings-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-bottom: 20px;
+    }
+    
+    .settings-table th,
+    .settings-table td {
+        padding: 10px;
+        border: 1px solid #ddd;
+        text-align: left;
+    }
+    
+    .settings-table thead th {
+        background-color: #f0f0f0;
+        font-weight: bold;
+    }
+    
+    .btn-action {
+        padding: 5px 10px;
+        margin-right: 5px;
+        border: none;
+        border-radius: 3px;
+        cursor: pointer;
+        font-size: 12px;
+    }
+    
+    .btn-edit {
+        background-color: #28a745;
+        color: white;
+    }
+    
+    .btn-edit:hover {
+        background-color: #218838;
+    }
+    
+    .btn-delete {
+        background-color: #dc3545;
+        color: white;
+    }
+    
+    .btn-delete:hover {
+        background-color: #c82333;
+    }
+    
+    .message.success {
+        color: #28a745;
+        background-color: #d4edda;
+        padding: 10px;
+        border-radius: 4px;
+        margin-top: 10px;
+    }
+    
+    .message.error {
+        color: #dc3545;
+        background-color: #f8d7da;
+        padding: 10px;
+        border-radius: 4px;
+        margin-top: 10px;
+    }
 </style>
 {% endblock %}
 
 {% block additional_scripts %}
 <script>
+    let isEditingStatus = false;
+    
+    function toggleStatusForm() {
+        const formContainer = document.getElementById('statusFormContainer');
+        const toggleButton = document.getElementById('toggleStatusButton');
+        
+        if (formContainer.style.display === 'none') {
+            formContainer.style.display = 'block';
+            toggleButton.textContent = '▲ Hide Form';
+        } else {
+            formContainer.style.display = 'none';
+            toggleButton.textContent = '▼ Add New Status';
+            cancelStatusEdit();
+        }
+    }
+    
+    function cancelStatusEdit() {
+        isEditingStatus = false;
+        document.getElementById('statusFormTitle').textContent = 'Add New Status';
+        document.getElementById('statusForm').reset();
+        document.getElementById('originalStatusId').value = '';
+        document.getElementById('status_id').disabled = false;
+        const messageDiv = document.getElementById('statusMessage');
+        messageDiv.style.display = 'none';
+    }
+    
+    async function loadModelStatuses() {
+        try {
+            const response = await fetch('/model-statuses');
+            if (response.ok) {
+                const statuses = await response.json();
+                const tbody = document.getElementById('statusTableBody');
+                
+                if (statuses.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="3">No statuses found</td></tr>';
+                } else {
+                    tbody.innerHTML = statuses.map(status => `
+                        <tr>
+                            <td>${status.id}</td>
+                            <td>${status.name}</td>
+                            <td>
+                                <button class="btn-action btn-edit" onclick="editStatus(${status.id}, '${status.name.replace(/'/g, "\\'")}')">Edit</button>
+                                <button class="btn-action btn-delete" onclick="deleteStatus(${status.id})">Delete</button>
+                            </td>
+                        </tr>
+                    `).join('');
+                }
+            }
+        } catch (error) {
+            console.error('Error loading model statuses:', error);
+        }
+    }
+    
+    function editStatus(id, name) {
+        isEditingStatus = true;
+        document.getElementById('statusFormTitle').textContent = 'Edit Status';
+        document.getElementById('originalStatusId').value = id;
+        document.getElementById('status_id').value = id;
+        document.getElementById('status_name').value = name;
+        
+        // Show the form if it's hidden
+        const formContainer = document.getElementById('statusFormContainer');
+        if (formContainer.style.display === 'none') {
+            toggleStatusForm();
+        }
+        
+        // Scroll to form
+        formContainer.scrollIntoView({ behavior: 'smooth' });
+    }
+    
+    async function saveStatus(event) {
+        event.preventDefault();
+        
+        const statusId = parseInt(document.getElementById('status_id').value);
+        const statusName = document.getElementById('status_name').value.trim();
+        const originalId = document.getElementById('originalStatusId').value;
+        
+        const statusData = {
+            id: statusId,
+            name: statusName
+        };
+        
+        try {
+            let response;
+            if (isEditingStatus && originalId) {
+                // Update existing status
+                response = await fetch(`/model-status/${originalId}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(statusData)
+                });
+            } else {
+                // Create new status
+                response = await fetch('/model-status', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(statusData)
+                });
+            }
+            
+            const result = await response.json();
+            const messageDiv = document.getElementById('statusMessage');
+            messageDiv.style.display = 'block';
+            
+            if (response.ok) {
+                messageDiv.textContent = result.message || 'Status saved successfully!';
+                messageDiv.className = 'message success';
+                
+                setTimeout(() => {
+                    loadModelStatuses();
+                    cancelStatusEdit();
+                    messageDiv.style.display = 'none';
+                }, 1500);
+            } else {
+                messageDiv.textContent = 'Error: ' + (result.error || 'Failed to save status');
+                messageDiv.className = 'message error';
+            }
+        } catch (error) {
+            const messageDiv = document.getElementById('statusMessage');
+            messageDiv.style.display = 'block';
+            messageDiv.textContent = 'Error saving status: ' + error.message;
+            messageDiv.className = 'message error';
+        }
+    }
+    
+    async function deleteStatus(id) {
+        if (!confirm(`Are you sure you want to delete status with ID ${id}?`)) {
+            return;
+        }
+        
+        try {
+            const response = await fetch(`/model-status/${id}`, {
+                method: 'DELETE'
+            });
+            
+            if (response.ok) {
+                loadModelStatuses();
+            } else {
+                const result = await response.json();
+                alert('Error: ' + (result.error || 'Failed to delete status'));
+            }
+        } catch (error) {
+            alert('Error deleting status: ' + error.message);
+        }
+    }
+
     function toggleEditForm() {
         const formContainer = document.getElementById('editFormContainer');
         const toggleButton = document.getElementById('toggleButton');
@@ -216,6 +485,7 @@
     // Load settings on page load
     window.onload = function() {
         loadProjectSettings();
+        loadModelStatuses();
     };
 </script>
 {% endblock %}
