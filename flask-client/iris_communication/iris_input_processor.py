@@ -9,8 +9,12 @@ class IrisInputProcessor:
     Processor for generating IRIS input CSV files.
     """
     
+    # CSV interval in seconds - data accumulates in same file for this duration
+    CSV_INTERVAL_SECONDS = 60  # 1 minute by default
+    
     def __init__(self):
-        pass
+        # Track active CSV files: {folder_type: {'path': str, 'start_time': datetime}}
+        self.active_csv_files = {}
     
     def create_iris_csv_input(self, 
                              csv_name: str, 
@@ -19,7 +23,9 @@ class IrisInputProcessor:
                              status_timestamp: datetime,
                              data: Any,
                              iris_main_folder: str,
-                             subfolder: str) -> Optional[str]:
+                             subfolder: str,
+                             folder_type: str = 'classifier',
+                             image_filename: str = '') -> Optional[str]:
         """
         Create CSV file with IRIS input data.
         
@@ -31,6 +37,8 @@ class IrisInputProcessor:
             data: The result or status data to store
             iris_main_folder: Main folder path for IRIS data
             subfolder: Subfolder within the main IRIS folder (e.g., model or classifier subfolder)
+            folder_type: Type of folder - 'model' or 'classifier'
+            image_filename: Name of the stored image file (for model results)
             
         Returns:
             Path to the created CSV file, or None if failed
@@ -38,31 +46,88 @@ class IrisInputProcessor:
         try:
             # Get solution root (3 levels up from this file: flask-client/iris_communication/iris_input_processor.py)
             solution_root = Path(__file__).parent.parent.parent
-            print(f"[IRIS] Solution root: {solution_root}")
             
             # Create full path: root / iris_main_folder / subfolder
             iris_path = solution_root / iris_main_folder / subfolder
-            print(f"[IRIS] Creating directory: {iris_path}")
             iris_path.mkdir(parents=True, exist_ok=True)
             
-            # Create CSV file path
-            csv_filename = f"{csv_name}.csv"
-            csv_filepath = iris_path / csv_filename
-            print(f"[IRIS] Writing CSV file: {csv_filepath}")
+            # Check if we need to create a new CSV file or append to existing
+            create_new_file = False
+            csv_filepath = None
+            
+            if folder_type in self.active_csv_files:
+                # Check if interval has elapsed
+                active_info = self.active_csv_files[folder_type]
+                elapsed_seconds = (datetime.now() - active_info['start_time']).total_seconds()
+                
+                if elapsed_seconds >= self.CSV_INTERVAL_SECONDS:
+                    # Interval elapsed, create new file
+                    create_new_file = True
+                    print(f"[IRIS] {folder_type.capitalize()} CSV interval elapsed ({elapsed_seconds:.1f}s), creating new file")
+                else:
+                    # Use existing file
+                    csv_filepath = Path(active_info['path'])
+                    print(f"[IRIS] Appending to existing {folder_type} CSV: {csv_filepath.name}")
+            else:
+                # No active file, create new one
+                create_new_file = True
+            
+            # Create new CSV file if needed
+            if create_new_file:
+                csv_filename = f"{csv_name}.csv"
+                csv_filepath = iris_path / csv_filename
+                print(f"[IRIS] Creating new CSV file: {csv_filepath}")
+                
+                # Track this as the active CSV file
+                self.active_csv_files[folder_type] = {
+                    'path': str(csv_filepath),
+                    'start_time': datetime.now()
+                }
             
             # Format timestamps
             file_creation_str = file_creation_timestamp.strftime('%Y-%m-%d %H:%M:%S.%f')
             status_str = status_timestamp.strftime('%Y-%m-%d %H:%M:%S.%f')
             
-            # Write CSV file
-            with open(csv_filepath, 'w', newline='', encoding='utf-8') as csvfile:
+            # Write CSV file (create with header or append)
+            mode = 'w' if create_new_file else 'a'
+            with open(csv_filepath, mode, newline='', encoding='utf-8') as csvfile:
                 writer = csv.writer(csvfile)
                 
-                # Write header
-                writer.writerow(['ProjectTitle', 'FileCreationTimestamp', 'StatusTimestamp', 'Data'])
-                
-                # Write data row
-                writer.writerow([project_title, file_creation_str, status_str, str(data)])
+                if folder_type == 'model':
+                    # Model results: extract detection data from result format [image, xyxy, particles]
+                    # Write header only when creating new file
+                    if create_new_file:
+                        writer.writerow(['timestamp', 'image', 'xyxy', 'conf', 'width_px', 'width_mm', 
+                                       'height_mm', 'max_d_mm', 'volume_est'])
+                    
+                    # Extract particles from result
+                    if isinstance(data, list) and len(data) >= 3:
+                        image_data = data[0]
+                        xyxy_data = data[1]
+                        particles = data[2]
+                        
+                        # Write one row per detection
+                        for i, particle in enumerate(particles):
+                            # Get corresponding bounding box
+                            bbox = xyxy_data[i] if i < len(xyxy_data) else []
+                            bbox_str = f"[{','.join(map(str, bbox))}]" if bbox else ''
+                            
+                            writer.writerow([
+                                status_str,
+                                image_filename if image_filename else 'frame',  # Image filename
+                                bbox_str,
+                                getattr(particle, 'conf', ''),
+                                getattr(particle, 'width_px', ''),
+                                getattr(particle, 'width_mm', ''),
+                                getattr(particle, 'height_mm', ''),
+                                getattr(particle, 'max_d_mm', ''),
+                                getattr(particle, 'volume_est', '')
+                            ])
+                else:
+                    # Classifier results: simple format
+                    if create_new_file:
+                        writer.writerow(['ProjectTitle', 'FileCreationTimestamp', 'StatusTimestamp', 'Data'])
+                    writer.writerow([project_title, file_creation_str, status_str, str(data)])
             
             return str(csv_filepath)
             
@@ -70,7 +135,7 @@ class IrisInputProcessor:
             print(f"Error generating IRIS input data: {e}")
             return None
     
-    def generate_iris_input_data(self, project_settings, timestamp: datetime, data: Any, folder_type: str) -> Optional[str]:
+    def generate_iris_input_data(self, project_settings, timestamp: datetime, data: Any, folder_type: str, image_filename: str = '') -> Optional[str]:
         """
         Wrapper method to generate IRIS input CSV data with automatic configuration.
         
@@ -79,6 +144,7 @@ class IrisInputProcessor:
             timestamp: Timestamp for the data
             data: The result or status data to store
             folder_type: Type of folder - 'model' or 'classifier'
+            image_filename: Name of the stored image file (for model results)
             
         Returns:
             Path to the created CSV file, or None if not created
@@ -118,7 +184,9 @@ class IrisInputProcessor:
             status_timestamp=timestamp,
             data=data,
             iris_main_folder=project_settings.iris_main_folder,
-            subfolder=subfolder
+            subfolder=subfolder,
+            folder_type=folder_type,
+            image_filename=image_filename
         )
         
         if csv_path:

@@ -157,7 +157,8 @@ def process_video_stream_background(thread_id, url, model_id=None, classifier_id
                                             project_settings=project_settings,
                                             timestamp=timestamp,
                                             data=result,
-                                            folder_type='model'
+                                            folder_type='model',
+                                            image_filename=filename
                                         )
                                     except Exception as e:
                                         print(f"Error processing with model: {e}")
