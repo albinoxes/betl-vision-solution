@@ -4,82 +4,63 @@
 {% block nav_models %}active{% endblock %}
 
 {% block additional_css %}
-<style>
-        table {
-            border-collapse: collapse;
-            width: 100%;
-        }
-        th, td {
-            border: 1px solid #ddd;
-            padding: 8px;
-            text-align: left;
-        }
-        th {
-            background-color: #f2f2f2;
-        }
-        .upload-form {
-            margin: 20px 0;
-            padding: 20px;
-            border: 1px solid #ccc;
-            background-color: #f9f9f9;
-        }
-        .upload-form input, .upload-form select {
-            margin: 5px 0;
-            padding: 5px;
-            width: 200px;
-        }
-        .upload-form button {
-            padding: 10px 20px;
-            background-color: #4CAF50;
-            color: white;
-            border: none;
-            cursor: pointer;
-        }
-        .upload-form button:hover {
-            background-color: #45a049;
-        }
-    </style>
+<link rel="stylesheet" href="{{ url_for('static', filename='css/project-settings.css') }}">
 {% endblock %}
 
 {% block content %}
 <h1>ML Model and Classifier Manager</h1>
 
-    <button id="addModelBtn" class="btn" type="button">Add a new model or classifier</button><br/><br/>
+    <button id="addModelBtn" class="btn-toggle" type="button">▼ Add a new model or classifier</button><br/><br/>
 
-    <div class="upload-form" id="uploadForm" style="display:none;">
+    <div class="settings-form-container" id="uploadForm" style="display:none;">
         <h2>Upload New Model or Classifier</h2>
         <form action="{{ url_for('ml.upload_model') }}" method="post" enctype="multipart/form-data">
-            <label for="model_file">Select Model File:</label><br>
-            <input type="file" id="model_file" name="model_file" required><br><br>
+            <div class="form-group">
+                <label for="model_file">Select Model File:</label>
+                <input type="file" id="model_file" name="model_file" required>
+            </div>
 
-            <label for="name">Model Name:</label><br>
-            <input type="text" id="name" name="name" placeholder="e.g., yolov5" required><br><br>
+            <div class="form-group">
+                <label for="name">Model Name:</label>
+                <input type="text" id="name" name="name" placeholder="e.g., yolov5" required>
+            </div>
 
-            <label for="version">Version:</label><br>
-            <input type="text" id="version" name="version" placeholder="e.g., 1.0.0" required><br><br>
+            <div class="form-group">
+                <label for="version">Version:</label>
+                <input type="text" id="version" name="version" placeholder="e.g., 1.0.0" required>
+            </div>
 
-            <label for="model_type">Model Type:</label><br>
-            <select id="model_type" name="model_type" required>
-                <option value="">Select type</option>
-                <option value="yolo">YOLO</option>
-                <option value="other">Other</option>
-            </select><br><br>
+            <div class="form-group">
+                <label for="model_type">Model Type:</label>
+                <select id="model_type" name="model_type" required>
+                    <option value="">Select type</option>
+                    <option value="yolo">YOLO</option>
+                    <option value="other">Other</option>
+                </select>
+            </div>
 
-            <label for="category">Category:</label><br>
-            <select id="category" name="category" required>
-                <option value="model">Model</option>
-                <option value="classifier">Classifier</option>
-            </select><br><br>
+            <div class="form-group">
+                <label for="category">Category:</label>
+                <select id="category" name="category" required>
+                    <option value="model">Model</option>
+                    <option value="classifier">Classifier</option>
+                </select>
+            </div>
 
-            <label for="description">Description (optional):</label><br>
-            <textarea id="description" name="description" rows="3" cols="50" placeholder="Optional description"></textarea><br><br>
+            <div class="form-group">
+                <label for="description">Description (optional):</label>
+                <textarea id="description" name="description" rows="3" placeholder="Optional description"></textarea>
+            </div>
 
-            <button type="submit">Upload Model</button>
+            <div class="form-actions">
+                <button type="submit" class="btn-save">Save</button>
+                <button type="button" class="btn-cancel" onclick="cancelUploadForm()">Cancel</button>
+            </div>
         </form>
     </div>
 
     <h2>Available Models</h2>
-    <table>
+    <table class="settings-table">
         <thead>
             <tr>
                 <th>ID</th>
@@ -110,7 +91,7 @@
                 </td>
                 <td>
                     <form action="{{ url_for('ml.delete_model', model_id=model[0]) }}" method="post" style="display:inline;">
-                        <button type="submit" class="btn" onclick="return confirm('Are you sure you want to delete this model?');">Delete</button>
+                        <button type="submit" class="btn-action btn-delete" onclick="return confirm('Are you sure you want to delete this model?');">Delete</button>
                     </form>
                 </td>
             </tr>
@@ -123,7 +104,7 @@
     {% endif %}
 
     <h2>Available Classifiers</h2>
-    <table>
+    <table class="settings-table">
         <thead>
             <tr>
                 <th>ID</th>
@@ -154,7 +135,7 @@
                 </td>
                 <td>
                     <form action="{{ url_for('ml.delete_model', model_id=classifier[0]) }}" method="post" style="display:inline;">
-                        <button type="submit" class="btn" onclick="return confirm('Are you sure you want to delete this classifier?');">Delete</button>
+                        <button type="submit" class="btn-action btn-delete" onclick="return confirm('Are you sure you want to delete this classifier?');">Delete</button>
                     </form>
                 </td>
             </tr>
@@ -167,19 +148,31 @@
     {% endif %}
 
     <br>
-    <button onclick="window.location.href='{{ url_for('camera.camera_manager') }}'">Back to Camera Manager</button>
+    <button class="btn-refresh" onclick="window.location.href='{{ url_for('camera.camera_manager') }}'">Back to Camera Manager</button>
 {% endblock %}
 
 {% block additional_scripts %}
     <script>
         document.getElementById('addModelBtn').addEventListener('click', function() {
             const form = document.getElementById('uploadForm');
+            const button = document.getElementById('addModelBtn');
             if (form.style.display === 'none') {
                 form.style.display = 'block';
+                button.textContent = '▲ Hide Form';
             } else {
                 form.style.display = 'none';
+                button.textContent = '▼ Add a new model or classifier';
             }
         });
+        
+        function cancelUploadForm() {
+            const form = document.getElementById('uploadForm');
+            const button = document.getElementById('addModelBtn');
+            form.style.display = 'none';
+            button.textContent = '▼ Add a new model or classifier';
+            // Reset the form
+            document.querySelector('#uploadForm form').reset();
+        }
 
         // Handle default model selection
         function setDefaultModel(checkbox) {
