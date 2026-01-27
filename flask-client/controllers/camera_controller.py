@@ -67,6 +67,7 @@ def process_video_stream_background(thread_id, url, model_id=None, classifier_id
     frame_count = 0
     last_model_processing_time = 0  # Track last time model was run
     last_classifier_processing_time = 0  # Track last time classifier was run
+    last_frame_save_time = 0  # Track last time frame was saved
     
     with thread_lock:
         if thread_id in active_threads:
@@ -133,27 +134,32 @@ def process_video_stream_background(thread_id, url, model_id=None, classifier_id
                             img2d = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
                             
                             if img2d is not None:
-                                # Save frame to storage directory and database
-                                try:
-                                    timestamp = datetime.now()
-                                    filename = f"frame_{timestamp.strftime('%Y%m%d_%H%M%S_%f')}.jpg"
-                                    
-                                    # Save the frame to disk with session tracking
-                                    filepath = store_data_manager.save_frame(img2d, session_key=thread_id, filename=filename)
-                                    
-                                    if filepath:
-                                        # Insert frame record into database with project_id_camera_id format
-                                        try:
-                                            full_camera_id = f"{project_title}_{thread_id}"
-                                            video_stream_provider.insert_segment(
-                                                camera_id=full_camera_id,
-                                                start_time=timestamp,
-                                                file_path=filepath
-                                            )
-                                        except Exception as e:
-                                            print(f"Error inserting frame record to database: {e}")
-                                except Exception as e:
-                                    print(f"Error saving frame: {e}")
+                                # Save frame to storage directory and database at the same interval as processing
+                                current_time = time.time()
+                                if current_time - last_frame_save_time >= processing_interval:
+                                    try:
+                                        timestamp = datetime.now()
+                                        filename = f"frame_{timestamp.strftime('%Y%m%d_%H%M%S_%f')}.jpg"
+                                        
+                                        # Save the frame to disk with session tracking
+                                        filepath = store_data_manager.save_frame(img2d, session_key=thread_id, filename=filename)
+                                        
+                                        if filepath:
+                                            # Insert frame record into database with project_id_camera_id format
+                                            try:
+                                                full_camera_id = f"{project_title}_{thread_id}"
+                                                video_stream_provider.insert_segment(
+                                                    camera_id=full_camera_id,
+                                                    start_time=timestamp,
+                                                    file_path=filepath
+                                                )
+                                            except Exception as e:
+                                                print(f"Error inserting frame record to database: {e}")
+                                        
+                                        # Update last frame save time
+                                        last_frame_save_time = current_time
+                                    except Exception as e:
+                                        print(f"Error saving frame: {e}")
                                 
                                 # Process with ML models if specified
                                 if model is not None:
