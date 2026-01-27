@@ -41,6 +41,9 @@ class SftpProcessor:
                 'error': 'Project settings not found. Please configure project settings first.'
             }
         
+        transport = None
+        sftp = None
+        
         try:
             # Connect to SFTP server
             transport = paramiko.Transport((sftp_server_info.server_name, 22))
@@ -72,10 +75,6 @@ class SftpProcessor:
             remote_file_path = f"{target_directory}/{file_name}"
             sftp.put(file_path, remote_file_path)
             
-            # Close connections
-            sftp.close()
-            transport.close()
-            
             print(f"Successfully uploaded {file_name} to {remote_file_path}")
             
             return {
@@ -92,6 +91,18 @@ class SftpProcessor:
                 'success': False,
                 'error': f'SFTP upload error: {str(e)}'
             }
+        finally:
+            # Always close connections to prevent socket leaks
+            if sftp:
+                try:
+                    sftp.close()
+                except:
+                    pass
+            if transport:
+                try:
+                    transport.close()
+                except:
+                    pass
     
     def _create_remote_directory(self, sftp, remote_path: str):
         """
