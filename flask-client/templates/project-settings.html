@@ -34,106 +34,80 @@
             <h2>Global Project Settings</h2>
 
 <div class="current-settings">
-    <h2>Current Settings</h2>
-    <table class="settings-table">
+    <div class="settings-actions">
+        <button onclick="enableEditMode()" class="btn-toggle" id="editModeButton">
+            ✏️ Edit Settings
+        </button>
+        <div id="editActions" style="display: none;">
+            <button onclick="saveProjectSettings()" class="btn-save">💾 Save Changes</button>
+            <button onclick="cancelEditMode()" class="btn-cancel">❌ Cancel</button>
+        </div>
+    </div>
+    
+    <table class="settings-table" id="settingsTable">
         <tr>
             <th>VM Number</th>
-            <td id="current_vm_number">-</td>
+            <td>
+                <span class="display-value" id="display_vm_number">-</span>
+                <input type="text" class="edit-input" id="edit_vm_number" style="display: none;" required>
+            </td>
         </tr>
         <tr>
             <th>Title</th>
-            <td id="current_title">-</td>
+            <td>
+                <span class="display-value" id="display_title">-</span>
+                <input type="text" class="edit-input" id="edit_title" style="display: none;" required>
+            </td>
         </tr>
         <tr>
             <th>Description</th>
-            <td id="current_description">-</td>
+            <td>
+                <span class="display-value" id="display_description">-</span>
+                <textarea class="edit-input" id="edit_description" rows="3" style="display: none;"></textarea>
+            </td>
         </tr>
         <tr>
             <th>IRIS Main Folder</th>
-            <td id="current_iris_main_folder">-</td>
+            <td>
+                <span class="display-value" id="display_iris_main_folder">-</span>
+                <input type="text" class="edit-input" id="edit_iris_main_folder" style="display: none;">
+            </td>
         </tr>
         <tr>
             <th>IRIS Classifier Subfolder</th>
-            <td id="current_iris_classifier_subfolder">-</td>
+            <td>
+                <span class="display-value" id="display_iris_classifier_subfolder">-</span>
+                <input type="text" class="edit-input" id="edit_iris_classifier_subfolder" style="display: none;">
+            </td>
         </tr>
         <tr>
             <th>IRIS Model Subfolder</th>
-            <td id="current_iris_model_subfolder">-</td>
+            <td>
+                <span class="display-value" id="display_iris_model_subfolder">-</span>
+                <input type="text" class="edit-input" id="edit_iris_model_subfolder" style="display: none;">
+            </td>
         </tr>
         <tr>
             <th>CSV Interval (seconds)</th>
-            <td id="current_csv_interval_seconds">-</td>
+            <td>
+                <span class="display-value" id="display_csv_interval_seconds">-</span>
+                <input type="number" class="edit-input" id="edit_csv_interval_seconds" min="1" style="display: none;">
+            </td>
         </tr>
         <tr>
             <th>Image Processing Interval (seconds)</th>
-            <td id="current_image_processing_interval">-</td>
+            <td>
+                <span class="display-value" id="display_image_processing_interval">-</span>
+                <input type="number" class="edit-input" id="edit_image_processing_interval" min="0.1" step="0.1" style="display: none;">
+            </td>
         </tr>
         <tr>
             <th>Last Updated</th>
-            <td id="current_updated_at">-</td>
+            <td>
+                <span class="display-value" id="display_updated_at">-</span>
+            </td>
         </tr>
     </table>
-    
-    <button onclick="toggleEditForm()" class="btn-toggle" id="toggleButton">
-        ▼ Edit Settings
-    </button>
-</div>
-
-<div class="settings-form-container" id="editFormContainer" style="display: none;">
-    <form id="projectSettingsForm" onsubmit="saveProjectSettings(event)">
-        <div class="form-group">
-            <label for="vm_number">VM Number:</label>
-            <input type="text" id="vm_number" name="vm_number" required>
-            <small>Unique identifier for this virtual machine</small>
-        </div>
-        
-        <div class="form-group">
-            <label for="title">Project Title:</label>
-            <input type="text" id="title" name="title" required>
-            <small>The display name for your project</small>
-        </div>
-        
-        <div class="form-group">
-            <label for="description">Description:</label>
-            <textarea id="description" name="description" rows="4"></textarea>
-            <small>Brief description of your project</small>
-        </div>
-        
-        <div class="form-group">
-            <label for="iris_main_folder">IRIS Main Folder:</label>
-            <input type="text" id="iris_main_folder" name="iris_main_folder">
-            <small>Main folder path for IRIS data</small>
-        </div>
-        
-        <div class="form-group">
-            <label for="iris_classifier_subfolder">IRIS Classifier Subfolder:</label>
-            <input type="text" id="iris_classifier_subfolder" name="iris_classifier_subfolder">
-            <small>Subfolder path for IRIS classifiers</small>
-        </div>
-        
-        <div class="form-group">
-            <label for="iris_model_subfolder">IRIS Model Subfolder:</label>
-            <input type="text" id="iris_model_subfolder" name="iris_model_subfolder">
-            <small>Subfolder path for IRIS models</small>
-        </div>
-        
-        <div class="form-group">
-            <label for="csv_interval_seconds">CSV Interval (seconds):</label>
-            <input type="number" id="csv_interval_seconds" name="csv_interval_seconds" min="1" value="60">
-            <small>Time interval (in seconds) to accumulate data in same CSV file</small>
-        </div>
-        
-        <div class="form-group">
-            <label for="image_processing_interval">Image Processing Interval (seconds):</label>
-            <input type="number" id="image_processing_interval" name="image_processing_interval" min="0.1" step="0.1" value="1.0">
-            <small>Time interval (in seconds) between ML model/classifier processing</small>
-        </div>
-        
-        <div class="form-actions">
-            <button type="submit" class="btn-save">Save Settings</button>
-            <button type="button" onclick="loadProjectSettings()" class="btn-refresh">Reset Form</button>
-        </div>
-    </form>
     
     <div id="settingsMessage" class="message" style="display: none;"></div>
 </div>
@@ -418,17 +392,38 @@
         }
     }
 
-    function toggleEditForm() {
-        const formContainer = document.getElementById('editFormContainer');
-        const toggleButton = document.getElementById('toggleButton');
+    function enableEditMode() {
+        // Hide all display values and show all edit inputs
+        document.querySelectorAll('.display-value').forEach(el => el.style.display = 'none');
+        document.querySelectorAll('.edit-input').forEach(el => el.style.display = 'block');
         
-        if (formContainer.style.display === 'none') {
-            formContainer.style.display = 'block';
-            toggleButton.textContent = '▲ Hide Edit Form';
-        } else {
-            formContainer.style.display = 'none';
-            toggleButton.textContent = '▼ Edit Settings';
-        }
+        // Copy current values to edit inputs
+        document.getElementById('edit_vm_number').value = document.getElementById('display_vm_number').textContent;
+        document.getElementById('edit_title').value = document.getElementById('display_title').textContent;
+        document.getElementById('edit_description').value = document.getElementById('display_description').textContent;
+        document.getElementById('edit_iris_main_folder').value = document.getElementById('display_iris_main_folder').textContent;
+        document.getElementById('edit_iris_classifier_subfolder').value = document.getElementById('display_iris_classifier_subfolder').textContent;
+        document.getElementById('edit_iris_model_subfolder').value = document.getElementById('display_iris_model_subfolder').textContent;
+        document.getElementById('edit_csv_interval_seconds').value = document.getElementById('display_csv_interval_seconds').textContent;
+        document.getElementById('edit_image_processing_interval').value = document.getElementById('display_image_processing_interval').textContent;
+        
+        // Toggle buttons
+        document.getElementById('editModeButton').style.display = 'none';
+        document.getElementById('editActions').style.display = 'block';
+    }
+
+    function cancelEditMode() {
+        // Show all display values and hide all edit inputs
+        document.querySelectorAll('.display-value').forEach(el => el.style.display = 'block');
+        document.querySelectorAll('.edit-input').forEach(el => el.style.display = 'none');
+        
+        // Toggle buttons
+        document.getElementById('editModeButton').style.display = 'block';
+        document.getElementById('editActions').style.display = 'none';
+        
+        // Hide any messages
+        const messageDiv = document.getElementById('settingsMessage');
+        messageDiv.style.display = 'none';
     }
 
     async function loadProjectSettings() {
@@ -437,31 +432,21 @@
             if (response.ok) {
                 const settings = await response.json();
                 
-                // Populate form
-                document.getElementById('vm_number').value = settings.vm_number || '';
-                document.getElementById('title').value = settings.title || '';
-                document.getElementById('description').value = settings.description || '';
-                document.getElementById('iris_main_folder').value = settings.iris_main_folder || '';
-                document.getElementById('iris_classifier_subfolder').value = settings.iris_classifier_subfolder || '';
-                document.getElementById('iris_model_subfolder').value = settings.iris_model_subfolder || '';
-                document.getElementById('csv_interval_seconds').value = settings.csv_interval_seconds || 60;
-                document.getElementById('image_processing_interval').value = settings.image_processing_interval || 1.0;
-                
-                // Populate current settings display
-                document.getElementById('current_vm_number').textContent = settings.vm_number || '-';
-                document.getElementById('current_title').textContent = settings.title || '-';
-                document.getElementById('current_description').textContent = settings.description || '-';
-                document.getElementById('current_iris_main_folder').textContent = settings.iris_main_folder || '-';
-                document.getElementById('current_iris_classifier_subfolder').textContent = settings.iris_classifier_subfolder || '-';
-                document.getElementById('current_iris_model_subfolder').textContent = settings.iris_model_subfolder || '-';
-                document.getElementById('current_csv_interval_seconds').textContent = settings.csv_interval_seconds || '60';
-                document.getElementById('current_image_processing_interval').textContent = settings.image_processing_interval || '1.0';
+                // Populate display values
+                document.getElementById('display_vm_number').textContent = settings.vm_number || '-';
+                document.getElementById('display_title').textContent = settings.title || '-';
+                document.getElementById('display_description').textContent = settings.description || '-';
+                document.getElementById('display_iris_main_folder').textContent = settings.iris_main_folder || '-';
+                document.getElementById('display_iris_classifier_subfolder').textContent = settings.iris_classifier_subfolder || '-';
+                document.getElementById('display_iris_model_subfolder').textContent = settings.iris_model_subfolder || '-';
+                document.getElementById('display_csv_interval_seconds').textContent = settings.csv_interval_seconds || '60';
+                document.getElementById('display_image_processing_interval').textContent = settings.image_processing_interval || '1.0';
                 
                 if (settings.updated_at) {
                     const date = new Date(settings.updated_at);
-                    document.getElementById('current_updated_at').textContent = date.toLocaleString();
+                    document.getElementById('display_updated_at').textContent = date.toLocaleString();
                 } else {
-                    document.getElementById('current_updated_at').textContent = '-';
+                    document.getElementById('display_updated_at').textContent = '-';
                 }
             }
         } catch (error) {
@@ -469,18 +454,16 @@
         }
     }
 
-    async function saveProjectSettings(event) {
-        event.preventDefault();
-        
+    async function saveProjectSettings() {
         const formData = {
-            vm_number: document.getElementById('vm_number').value,
-            title: document.getElementById('title').value,
-            description: document.getElementById('description').value,
-            iris_main_folder: document.getElementById('iris_main_folder').value,
-            iris_classifier_subfolder: document.getElementById('iris_classifier_subfolder').value,
-            iris_model_subfolder: document.getElementById('iris_model_subfolder').value,
-            csv_interval_seconds: parseInt(document.getElementById('csv_interval_seconds').value) || 60,
-            image_processing_interval: parseFloat(document.getElementById('image_processing_interval').value) || 1.0
+            vm_number: document.getElementById('edit_vm_number').value,
+            title: document.getElementById('edit_title').value,
+            description: document.getElementById('edit_description').value,
+            iris_main_folder: document.getElementById('edit_iris_main_folder').value,
+            iris_classifier_subfolder: document.getElementById('edit_iris_classifier_subfolder').value,
+            iris_model_subfolder: document.getElementById('edit_iris_model_subfolder').value,
+            csv_interval_seconds: parseInt(document.getElementById('edit_csv_interval_seconds').value) || 60,
+            image_processing_interval: parseFloat(document.getElementById('edit_image_processing_interval').value) || 1.0
         };
 
         try {
@@ -501,8 +484,10 @@
                 messageDiv.className = 'message success';
                 
                 // Reload the current settings display
+                await loadProjectSettings();
+                cancelEditMode();
+                
                 setTimeout(() => {
-                    loadProjectSettings();
                     messageDiv.style.display = 'none';
                 }, 2000);
             } else {
