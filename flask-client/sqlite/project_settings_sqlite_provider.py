@@ -6,9 +6,6 @@ from dataclasses import dataclass
 
 @dataclass
 class ProjectSettings:
-    """
-    Data class representing project settings.
-    """
     id: int
     vm_number: str
     title: str
@@ -29,10 +26,6 @@ class ProjectSettings:
 
 
 class ProjectSettingsSQLiteProvider:
-    """
-    SQLite provider for storing and retrieving project settings.
-    """
-
     def __init__(self, db_path: str = 'project_settings.db'):
         self.db_path = db_path
         self._init_db()
@@ -60,10 +53,6 @@ class ProjectSettingsSQLiteProvider:
             conn.commit()
 
     def get_current_settings(self) -> Optional[ProjectSettings]:
-        """
-        Get the current project settings (assumes single row configuration).
-        Returns: ProjectSettings instance
-        """
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute('''
@@ -87,9 +76,6 @@ class ProjectSettingsSQLiteProvider:
             return None
 
     def update_settings(self, vm_number: str, title: str, description: str) -> bool:
-        """
-        Update the project settings. Creates a new entry if none exists.
-        """
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute('SELECT id FROM project_settings ORDER BY id DESC LIMIT 1')
@@ -111,9 +97,6 @@ class ProjectSettingsSQLiteProvider:
             return True
 
     def get_settings_dict(self) -> Optional[dict]:
-        """
-        Get the current settings as a dictionary.
-        """
         settings = self.get_current_settings()
         if settings:
             return settings.to_dict()
