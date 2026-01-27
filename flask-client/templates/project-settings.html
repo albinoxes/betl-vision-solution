@@ -3,9 +3,35 @@
 {% block title %}Belt Vision - Project Settings{% endblock %}
 {% block nav_project %}active{% endblock %}
 
+{% block additional_css %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/project-settings.css') }}">
+{% endblock %}
+
 {% block content %}
 <h1>Project Settings</h1>
 <p>Configure your project information and settings.</p>
+
+<div class="settings-layout">
+    <div class="settings-sidebar">
+        <nav class="settings-nav">
+            <button class="settings-nav-item active" onclick="showSection('global-settings', this)">
+                <span class="settings-nav-icon">⚙️</span>
+                <span class="settings-nav-text">Global Settings</span>
+            </button>
+            <button class="settings-nav-item" onclick="showSection('sftp-settings', this)">
+                <span class="settings-nav-icon">🔒</span>
+                <span class="settings-nav-text">SFTP Settings</span>
+            </button>
+            <button class="settings-nav-item" onclick="showSection('additional-info', this)">
+                <span class="settings-nav-icon">ℹ️</span>
+                <span class="settings-nav-text">Additional Information</span>
+            </button>
+        </nav>
+    </div>
+    
+    <div class="settings-content">
+        <div id="global-settings" class="settings-section active">
+            <h2>Global Project Settings</h2>
 
 <div class="current-settings">
     <h2>Current Settings</h2>
@@ -112,56 +138,10 @@
     <div id="settingsMessage" class="message" style="display: none;"></div>
 </div>
 
-<div class="model-status-section">
-    <h2>Model Statuses</h2>
-    <table class="settings-table" id="statusTable">
-        <thead>
-            <tr>
-                <th>ID</th>
-                <th>Name</th>
-                <th>Actions</th>
-            </tr>
-        </thead>
-        <tbody id="statusTableBody">
-            <tr>
-                <td colspan="3">No statuses found</td>
-            </tr>
-        </tbody>
-    </table>
-    
-    <button onclick="toggleStatusForm()" class="btn-toggle" id="toggleStatusButton">
-        ▼ Add New Status
-    </button>
-    
-    <div class="status-form-container" id="statusFormContainer" style="display: none;">
-        <h3 id="statusFormTitle">Add New Status</h3>
-        <form id="statusForm" onsubmit="saveStatus(event)">
-            <input type="hidden" id="originalStatusId" value="">
-            
-            <div class="form-group">
-                <label for="status_id">ID:</label>
-                <input type="number" id="status_id" name="status_id" required>
-                <small>Unique identifier for the status</small>
-            </div>
-            
-            <div class="form-group">
-                <label for="status_name">Name:</label>
-                <input type="text" id="status_name" name="status_name" required>
-                <small>Display name for the status</small>
-            </div>
-            
-            <div class="form-actions">
-                <button type="submit" class="btn-save">Save Status</button>
-                <button type="button" onclick="cancelStatusEdit()" class="btn-refresh">Cancel</button>
-            </div>
-        </form>
+        </div>
         
-        <div id="statusMessage" class="message" style="display: none;"></div>
-    </div>
-</div>
-
-<div class="sftp-section">
-    <h2>SFTP Servers</h2>
+        <div id="sftp-settings" class="settings-section">
+            <h2>SFTP Server Configuration</h2>
     <table class="settings-table" id="sftpTable">
         <thead>
             <tr>
@@ -214,125 +194,84 @@
         
         <div id="sftpMessage" class="message" style="display: none;"></div>
     </div>
+        </div>
+        
+        <div id="additional-info" class="settings-section">
+            <h2>Additional Information - Model Statuses</h2>
+    <table class="settings-table" id="statusTable">
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Name</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody id="statusTableBody">
+            <tr>
+                <td colspan="3">No statuses found</td>
+            </tr>
+        </tbody>
+    </table>
+    
+    <button onclick="toggleStatusForm()" class="btn-toggle" id="toggleStatusButton">
+        ▼ Add New Status
+    </button>
+    
+    <div class="status-form-container" id="statusFormContainer" style="display: none;">
+        <h3 id="statusFormTitle">Add New Status</h3>
+        <form id="statusForm" onsubmit="saveStatus(event)">
+            <input type="hidden" id="originalStatusId" value="">
+            
+            <div class="form-group">
+                <label for="status_id">ID:</label>
+                <input type="number" id="status_id" name="status_id" required>
+                <small>Unique identifier for the status</small>
+            </div>
+            
+            <div class="form-group">
+                <label for="status_name">Name:</label>
+                <input type="text" id="status_name" name="status_name" required>
+                <small>Display name for the status</small>
+            </div>
+            
+            <div class="form-actions">
+                <button type="submit" class="btn-save">Save Status</button>
+                <button type="button" onclick="cancelStatusEdit()" class="btn-refresh">Cancel</button>
+            </div>
+        </form>
+        
+        <div id="statusMessage" class="message" style="display: none;"></div>
+    </div>
+        </div>
+    </div>
 </div>
 
-<style>
-    .btn-toggle {
-        margin-top: 20px;
-        padding: 10px 20px;
-        background-color: #007bff;
-        color: white;
-        border: none;
-        border-radius: 4px;
-        cursor: pointer;
-        font-size: 14px;
-    }
-    
-    .btn-toggle:hover {
-        background-color: #0056b3;
-    }
-    
-    .settings-form-container {
-        margin-top: 20px;
-        padding: 20px;
-        border: 1px solid #ddd;
-        border-radius: 4px;
-        background-color: #f9f9f9;
-    }
-    
-    .model-status-section {
-        margin-top: 40px;
-        padding-top: 20px;
-        border-top: 2px solid #ddd;
-    }
-    
-    .sftp-section {
-        margin-top: 40px;
-        padding-top: 20px;
-        border-top: 2px solid #ddd;
-    }
-    
-    .status-form-container {
-        margin-top: 20px;
-        padding: 20px;
-        border: 1px solid #ddd;
-        border-radius: 4px;
-        background-color: #f9f9f9;
-    }
-    
-    .sftp-form-container {
-        margin-top: 20px;
-        padding: 20px;
-        border: 1px solid #ddd;
-        border-radius: 4px;
-        background-color: #f9f9f9;
-    }
-    
-    .settings-table {
-        width: 100%;
-        border-collapse: collapse;
-        margin-bottom: 20px;
-    }
-    
-    .settings-table th,
-    .settings-table td {
-        padding: 10px;
-        border: 1px solid #ddd;
-        text-align: left;
-    }
-    
-    .settings-table thead th {
-        background-color: #f0f0f0;
-        font-weight: bold;
-    }
-    
-    .btn-action {
-        padding: 5px 10px;
-        margin-right: 5px;
-        border: none;
-        border-radius: 3px;
-        cursor: pointer;
-        font-size: 12px;
-    }
-    
-    .btn-edit {
-        background-color: #28a745;
-        color: white;
-    }
-    
-    .btn-edit:hover {
-        background-color: #218838;
-    }
-    
-    .btn-delete {
-        background-color: #dc3545;
-        color: white;
-    }
-    
-    .btn-delete:hover {
-        background-color: #c82333;
-    }
-    
-    .message.success {
-        color: #28a745;
-        background-color: #d4edda;
-        padding: 10px;
-        border-radius: 4px;
-        margin-top: 10px;
-    }
-    
-    .message.error {
-        color: #dc3545;
-        background-color: #f8d7da;
-        padding: 10px;
-        border-radius: 4px;
-        margin-top: 10px;
-    }
-</style>
 {% endblock %}
 
 {% block additional_scripts %}
 <script>
+    // Section Navigation
+    function showSection(sectionId, button) {
+        // Hide all sections
+        const sections = document.querySelectorAll('.settings-section');
+        sections.forEach(section => section.classList.remove('active'));
+        
+        // Remove active class from all nav buttons
+        const navButtons = document.querySelectorAll('.settings-nav-item');
+        navButtons.forEach(btn => btn.classList.remove('active'));
+        
+        // Show selected section
+        const targetSection = document.getElementById(sectionId);
+        if (targetSection) {
+            targetSection.classList.add('active');
+        }
+        
+        // Add active class to clicked button
+        if (button) {
+            button.classList.add('active');
+        }
+    }
+    
     let isEditingStatus = false;
     
     function toggleStatusForm() {
