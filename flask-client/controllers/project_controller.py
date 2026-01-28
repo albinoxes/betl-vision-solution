@@ -10,7 +10,10 @@ def project_settings():
     """
     Render the project settings page.
     """
-    return render_template('project-settings.html')
+    from sqlite.ml_sqlite_provider import ml_provider
+    models = ml_provider.list_models()
+    classifiers = ml_provider.list_classifiers()
+    return render_template('project-settings.html', models=models, classifiers=classifiers)
 
 
 @project_bp.route('/project-settings', methods=['GET'])
