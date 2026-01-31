@@ -360,7 +360,7 @@
 
             <div class="sftp-form-container" id="cameraSettingsForm" style="display:none;">
                 <h3>Add New Camera Settings</h3>
-                <form action="{{ url_for('camera.add_camera_settings') }}" method="post">
+                <form action="{{ url_for('detection_model_settings.add_camera_settings') }}" method="post">
                     <div class="form-group">
                         <label for="setting_name">Settings Name:</label>
                         <input type="text" id="setting_name" name="name" required>
@@ -456,7 +456,7 @@
                         <td>
                             <button class="btn-action" onclick="editCameraSettings({{ setting[0] }}, '{{ setting[1] }}', {{ setting[2] }}, {{ setting[3] }}, {{ setting[4] }}, {{ setting[5] }}, {{ setting[6] }}, {{ setting[7] }}, {{ setting[8] }}, {{ setting[9] }})">Edit</button>
                             {% if setting[1] != 'default' %}
-                            <form action="{{ url_for('camera.delete_camera_settings', setting_name=setting[1]) }}" method="post" style="display:inline;">
+                            <form action="{{ url_for('detection_model_settings.delete_camera_settings', setting_name=setting[1]) }}" method="post" style="display:inline;">
                                 <button type="submit" class="btn-action btn-delete" onclick="return confirm('Are you sure you want to delete this setting?');">Delete</button>
                             </form>
                             {% endif %}

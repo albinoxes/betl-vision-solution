@@ -4,6 +4,7 @@ from controllers.ml_model_controller import ml_bp
 from controllers.project_controller import project_bp
 from controllers.model_status_controller import model_status_bp
 from controllers.sftp_controller import sftp_bp
+from controllers.detection_model_settings_controller import detection_model_settings_bp
 import signal
 import sys
 
@@ -14,6 +15,7 @@ app.register_blueprint(ml_bp)
 app.register_blueprint(project_bp)
 app.register_blueprint(model_status_bp)
 app.register_blueprint(sftp_bp)
+app.register_blueprint(detection_model_settings_bp)
 
 @app.route('/')
 def index():
