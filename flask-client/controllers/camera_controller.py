@@ -534,35 +534,45 @@ def connected_devices():
     
     def query_legacy():
         try:
+            print("[Connected Devices] Querying legacy-camera-server (port 5002)...")
             response = requests.get('http://localhost:5002/devices', timeout=2)
             if response.status_code == 200:
-                return [{'type': 'legacy', 'id': dev['id'], 'info': dev['info'], 
+                result = [{'type': 'legacy', 'id': dev['id'], 'info': dev['info'], 
                         'ip': dev['info'].split(';')[0] if ';' in dev['info'] else 'unknown',
                         'status': dev['status']} for dev in response.json()]
-        except:
-            pass
+                print(f"[Connected Devices] ✓ Legacy server responded with {len(result)} device(s)")
+                return result
+        except Exception as e:
+            print(f"[Connected Devices] ✗ Legacy server not responding: {e}")
         return []
     
     def query_webcam():
         try:
+            print("[Connected Devices] Querying webcam-server (port 5001)...")
             response = requests.get('http://localhost:5001/devices', timeout=2)
             if response.status_code == 200:
-                return [{'type': 'webcam', 'id': dev['id'], 'info': dev['info'],
+                result = [{'type': 'webcam', 'id': dev['id'], 'info': dev['info'],
                         'ip': 'localhost', 'status': dev['status']} for dev in response.json()]
-        except:
-            pass
+                print(f"[Connected Devices] ✓ Webcam server responded with {len(result)} device(s)")
+                return result
+        except Exception as e:
+            print(f"[Connected Devices] ✗ Webcam server not responding: {e}")
         return []
     
     def query_simulator():
         try:
+            print("[Connected Devices] Querying simulator-server (port 5003)...")
             response = requests.get('http://localhost:5003/devices', timeout=2)
             if response.status_code == 200:
-                return [{'type': 'simulator', 'id': dev['id'], 'info': dev['info'],
+                result = [{'type': 'simulator', 'id': dev['id'], 'info': dev['info'],
                         'ip': 'localhost', 'status': dev['status']} for dev in response.json()]
-        except:
-            pass
+                print(f"[Connected Devices] ✓ Simulator server responded with {len(result)} device(s)")
+                return result
+        except Exception as e:
+            print(f"[Connected Devices] ✗ Simulator server not responding: {e}")
         return []
     
+    print("[Connected Devices] Starting parallel device query...")
     # Execute all queries in parallel
     with ThreadPoolExecutor(max_workers=3) as executor:
         futures = [
@@ -574,6 +584,7 @@ def connected_devices():
         for future in as_completed(futures):
             devices.extend(future.result())
     
+    print(f"[Connected Devices] Total devices found: {len(devices)}")
     return jsonify(devices)
 
 @camera_bp.route('/camera-manager')
