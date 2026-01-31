@@ -44,6 +44,17 @@ def process_video_stream_background(thread_id, url, model_id=None, classifier_id
     settings = None
     model_loaded = False
     
+    # Load camera settings before the loop starts
+    from sqlite.camera_settings_sqlite_provider import camera_settings_provider
+    if not settings_id:
+        # Get the first camera settings from the database
+        all_settings = camera_settings_provider.get_all_settings()
+        if all_settings and len(all_settings) > 0:
+            settings_id = all_settings[0][1]  # Get the name from the first setting
+            print(f"[Thread {thread_id}] No settings specified, using first available: {settings_id}")
+        else:
+            print(f"[Thread {thread_id}] Warning: No camera settings found in database")
+    
     # Get project title and settings once before processing frames
     from sqlite.project_settings_sqlite_provider import project_settings_provider
     project_settings = project_settings_provider.get_project_settings()
@@ -571,13 +582,11 @@ def connected_devices():
 @camera_bp.route('/camera-manager')
 def camera_manager():
     from sqlite.ml_sqlite_provider import ml_provider
-    from sqlite.camera_settings_sqlite_provider import camera_settings_provider
     from flask import make_response
     models = ml_provider.list_models()
     classifiers = ml_provider.list_classifiers()
-    settings = camera_settings_provider.list_settings()
     
-    response = make_response(render_template('camera-manager.html', models=models, classifiers=classifiers, settings=settings))
+    response = make_response(render_template('camera-manager.html', models=models, classifiers=classifiers))
     # Prevent caching to ensure fresh data on reload
     response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
     response.headers['Pragma'] = 'no-cache'
