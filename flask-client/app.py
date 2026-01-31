@@ -62,7 +62,17 @@ app.register_blueprint(detection_model_settings_bp)
 
 @app.route('/')
 def index():
-    return render_template('index.html')
+    # Get server health statuses
+    server_statuses = health_service.get_all_statuses()
+    servers = [
+        {
+            'name': name,
+            'status': status.value,
+            'available': status.value == 'available'
+        }
+        for name, status in server_statuses.items()
+    ]
+    return render_template('index.html', servers=servers)
 
 def cleanup_threads():
     """Stop all active threads gracefully"""
