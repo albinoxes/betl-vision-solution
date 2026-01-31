@@ -52,6 +52,9 @@ health_service.register_server(ServerConfig(
 # Start health monitoring
 health_service.start_all()
 
+# Store health service in app config for access by controllers
+app.config['HEALTH_SERVICE'] = health_service
+
 app.register_blueprint(camera_bp)
 app.register_blueprint(ml_bp)
 app.register_blueprint(project_bp)

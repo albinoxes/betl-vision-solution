@@ -2,7 +2,7 @@
 Health monitoring controller for server status endpoints.
 """
 
-from flask import Blueprint, jsonify
+from flask import Blueprint, jsonify, current_app
 from infrastructure.monitoring import HealthMonitoringService
 
 health_bp = Blueprint('health', __name__)
@@ -16,7 +16,7 @@ def get_servers_health():
     Returns:
         JSON object with server statuses
     """
-    from app import health_service
+    health_service = current_app.config['HEALTH_SERVICE']
     
     statuses = health_service.get_all_statuses()
     
@@ -37,7 +37,7 @@ def get_server_health(server_name):
     Returns:
         JSON object with server status
     """
-    from app import health_service
+    health_service = current_app.config['HEALTH_SERVICE']
     
     status = health_service.get_server_status(server_name)
     
