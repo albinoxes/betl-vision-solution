@@ -6,7 +6,7 @@
 1) flask-client
     - python3.12 -m venv flask_env
     - .\flask_env\Scripts\Activate.ps1
-    - pip install requests, flask, Pillow, opencv-python, torch, torchvision, ultralytics
+    - pip install requests, flask, Pillow, opencv-python, torch, torchvision, ultralytics, pandas, paramiko, psutil
 
 2) webcam-server:
     - python3.12 -m venv webcam_env
@@ -20,3 +20,8 @@
     - pip install flask
     - pip install "numpy<2.0"
     - pip install Pillow
+
+4) simulator-server:
+    - python3.12 -m venv simulator_env
+    - .\simulator_env\Scripts\Activate.ps1
+    - pip install opencv-python, flask

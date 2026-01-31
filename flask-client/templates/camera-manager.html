@@ -1,93 +1,10 @@
-<!DOCTYPE html>
-<html>
-    <head>
-        <title>Belt Vision Camera Manager</title>
-        <script>
-            async function loadDevices() {
-                const response = await fetch('/connected-devices');
-                const devices = await response.json();
-                const tableBody = document.getElementById('deviceTableBody');
-                tableBody.innerHTML = '';
-                devices.forEach(device => {
-                    const row = document.createElement('tr');
-                    
-                    // Build model select
-                    let modelOptions = '<option value="">Select Model</option>';
-                    window.models.forEach(model => {
-                        modelOptions += `<option value="${model[1]}:${model[2]}">${model[1]} (${model[2]})</option>`;
-                    });
-                    const modelSelect = `<select>${modelOptions}</select>`;
-                    
-                    // Build classifier select
-                    let classifierOptions = '<option value="">Select Classifier</option>';
-                    window.classifiers.forEach(classifier => {
-                        classifierOptions += `<option value="${classifier[1]}:${classifier[2]}">${classifier[1]} (${classifier[2]})</option>`;
-                    });
-                    const classifierSelect = `<select>${classifierOptions}</select>`;
-                    
-                    row.innerHTML = `
-                        <td>${device.type}</td>
-                        <td>${device.id}</td>
-                        <td>${device.info}</td>
-                        <td>${device.ip}</td>
-                        <td>${device.status}</td>
-                        <td>${modelSelect}</td>
-                        <td>${classifierSelect}</td>
-                        <td><button onclick="viewStream('${device.type}', ${device.id}, this)">View Stream</button></td>
-                    `;
-                    tableBody.appendChild(row);
-                });
-            }
-            function viewStream(type, id, btn) {
-                const row = btn.closest('tr');
-                const selects = row.querySelectorAll('select');
-                const modelValue = selects[0].value;
-                const classifierValue = selects[1].value;
-                let url = type === 'legacy' ? `/legacy-camera-video/${id}` : '/video';
-                const params = [];
-                if (modelValue) params.push(`model=${encodeURIComponent(modelValue)}`);
-                if (classifierValue) params.push(`classifier=${encodeURIComponent(classifierValue)}`);
-                if (params.length) url += '?' + params.join('&');
-                const videoFeed = document.getElementById('videoFeed');
-                videoFeed.src = url;
-                document.getElementById('videoContainer').style.display = 'block';
-            }
-            window.onload = function() {
-                loadDevices();
-                document.getElementById('addSettingsBtn').addEventListener('click', function() {
-                    const form = document.getElementById('settingsForm');
-                    if (form.style.display === 'none') {
-                        form.style.display = 'block';
-                    } else {
-                        form.style.display = 'none';
-                    }
-                });
-            };
+{% extends "base.html" %}
 
-            function editSettings(name, min_conf, min_d_detect, min_d_save, bb_factor, vol_x, vol_exp) {
-                document.getElementById('edit_setting_name').value = name;
-                document.getElementById('edit_min_conf').value = min_conf;
-                document.getElementById('edit_min_d_detect').value = min_d_detect;
-                document.getElementById('edit_min_d_save').value = min_d_save;
-                document.getElementById('edit_particle_bb_dimension_factor').value = bb_factor;
-                document.getElementById('edit_est_particle_volume_x').value = vol_x;
-                document.getElementById('edit_est_particle_volume_exp').value = vol_exp;
-                document.getElementById('editForm').action = '{{ url_for("camera.update_camera_settings", setting_name="") }}'.replace('setting_name=', 'setting_name=' + name);
-                document.getElementById('editSettingsForm').style.display = 'block';
-            }
+{% block title %}Belt Vision - Camera Manager{% endblock %}
+{% block nav_camera %}active{% endblock %}
 
-            function cancelEdit() {
-                document.getElementById('editSettingsForm').style.display = 'none';
-            }
-        </script>
-        <script>
-            window.models = {{ models|tojson }};
-            window.classifiers = {{ classifiers|tojson }};
-            window.settings = {{ settings|tojson }};
-        </script>
-    </head>
-    <body>
-        <h1>Connected Devices</h1>
+{% block content %}
+<h1>Connected Devices</h1>
         <table border="1">
             <thead>
                 <tr>
@@ -98,6 +15,8 @@
                     <th>Status</th>
                     <th>ML Model</th>
                     <th>Classifier</th>
+                    <th>Settings</th>
+                    <th>Thread Control</th>
                     <th>Action</th>
                 </tr>
             </thead>
@@ -207,5 +126,269 @@
             <h2>Video Feed</h2>
             <img id="videoFeed" width="640" alt="Video feed will appear here">
         </div>
-    </body>
-</html>
+{% endblock %}
+
+{% block additional_scripts %}
+<script>
+    window.models = {{ models|tojson }};
+    window.classifiers = {{ classifiers|tojson }};
+    window.settings = {{ settings|tojson }};
+</script>
+<script>
+    async function loadDevices() {
+        try {
+            const response = await fetch('/connected-devices');
+            if (!response.ok) {
+                console.error('Failed to fetch devices:', response.status);
+                return;
+            }
+            const devices = await response.json();
+            
+            // Get active threads
+            const threadsResponse = await fetch('/active-threads');
+            if (!threadsResponse.ok) {
+                console.error('Failed to fetch active threads:', threadsResponse.status);
+                return;
+            }
+            const activeThreads = await threadsResponse.json();
+        
+        // Create a map of active thread IDs
+        const activeThreadsMap = new Map();
+        activeThreads.forEach(thread => {
+            activeThreadsMap.set(thread.thread_id, thread);
+        });
+        
+        const tableBody = document.getElementById('deviceTableBody');
+        tableBody.innerHTML = '';
+        
+        // Get defaults from localStorage
+        const defaultModel = localStorage.getItem('defaultModel') || '';
+        const defaultClassifier = localStorage.getItem('defaultClassifier') || '';
+        
+        devices.forEach(device => {
+            const row = document.createElement('tr');
+            
+            // Build model select
+            let modelOptions = '<option value="">Select Model</option>';
+            window.models.forEach(model => {
+                const modelId = `${model[1]}:${model[2]}`;
+                const selected = modelId === defaultModel ? 'selected' : '';
+                modelOptions += `<option value="${modelId}" ${selected}>${model[1]} (${model[2]})</option>`;
+            });
+            const modelSelect = `<select>${modelOptions}</select>`;
+            
+            // Build classifier select
+            let classifierOptions = '<option value="">Select Classifier</option>';
+            window.classifiers.forEach(classifier => {
+                const classifierId = `${classifier[1]}:${classifier[2]}`;
+                const selected = classifierId === defaultClassifier ? 'selected' : '';
+                classifierOptions += `<option value="${classifierId}" ${selected}>${classifier[1]} (${classifier[2]})</option>`;
+            });
+            const classifierSelect = `<select>${classifierOptions}</select>`;
+            
+            // Build settings select
+            let settingsOptions = '<option value="">Default Settings</option>';
+            window.settings.forEach(setting => {
+                settingsOptions += `<option value="${setting[1]}">${setting[1]}</option>`;
+            });
+            const settingsSelect = `<select>${settingsOptions}</select>`;
+            
+            // Check if this device has an active thread
+            const threadId = `${device.type}_${device.id}`;
+            const threadInfo = activeThreadsMap.get(threadId);
+            const isThreadRunning = threadInfo && threadInfo.running;
+            const threadButtonText = isThreadRunning ? 'Stop Thread' : 'Start Thread';
+            const threadButtonColor = isThreadRunning ? 'background-color: #ff4444;' : '';
+            
+            row.innerHTML = `
+                <td>${device.type}</td>
+                <td>${device.id}</td>
+                <td>${device.info}</td>
+                <td>${device.ip}</td>
+                <td>${device.status}</td>
+                <td>${modelSelect}</td>
+                <td>${classifierSelect}</td>
+                <td>${settingsSelect}</td>
+                <td><button class="thread-btn" data-thread-id="${device.type}_${device.id}" onclick="toggleThread('${device.type}', ${device.id}, this)" style="${threadButtonColor}">${threadButtonText}</button></td>
+                <td><button onclick="viewStream('${device.type}', ${device.id}, this)">View Stream</button></td>
+            `;
+            tableBody.appendChild(row);
+        });
+        } catch (error) {
+            console.error('Error loading devices:', error);
+        }
+    }
+    
+    function viewStream(type, id, btn) {
+        const videoContainer = document.getElementById('videoContainer');
+        const videoFeed = document.getElementById('videoFeed');
+        
+        // Check if video is currently playing
+        if (btn.textContent === 'Stop Stream') {
+            // Stop the stream
+            videoFeed.src = '';
+            videoContainer.style.display = 'none';
+            btn.textContent = 'View Stream';
+            btn.style.backgroundColor = '';
+            
+            // Reset all other view stream buttons
+            document.querySelectorAll('button').forEach(b => {
+                if (b.textContent === 'Stop Stream' && b !== btn) {
+                    b.textContent = 'View Stream';
+                    b.style.backgroundColor = '';
+                }
+            });
+        } else {
+            // Start the stream
+            const row = btn.closest('tr');
+            const selects = row.querySelectorAll('select');
+            const modelValue = selects[0].value;
+            const classifierValue = selects[1].value;
+            const settingsValue = selects[2].value;
+            let url;
+            if (type === 'legacy') {
+                url = `/legacy-camera-video/${id}`;
+            } else if (type === 'simulator') {
+                url = '/simulator-video';
+            } else {
+                url = '/video';
+            }
+            const params = [];
+            if (modelValue) params.push(`model=${encodeURIComponent(modelValue)}`);
+            if (classifierValue) params.push(`classifier=${encodeURIComponent(classifierValue)}`);
+            if (settingsValue) params.push(`settings=${encodeURIComponent(settingsValue)}`);
+            if (params.length) url += '?' + params.join('&');
+            
+            // Reset all other view stream buttons
+            document.querySelectorAll('button').forEach(b => {
+                if (b.textContent === 'Stop Stream') {
+                    b.textContent = 'View Stream';
+                    b.style.backgroundColor = '';
+                }
+            });
+            
+            videoFeed.src = url;
+            videoContainer.style.display = 'block';
+            btn.textContent = 'Stop Stream';
+            btn.style.backgroundColor = '#4444ff';
+        }
+    }
+    
+    window.onload = function() {
+        loadDevices();
+        document.getElementById('addSettingsBtn').addEventListener('click', function() {
+            const form = document.getElementById('settingsForm');
+            if (form.style.display === 'none') {
+                form.style.display = 'block';
+            } else {
+                form.style.display = 'none';
+            }
+        });
+    };
+
+    function editSettings(name, min_conf, min_d_detect, min_d_save, bb_factor, vol_x, vol_exp) {
+        document.getElementById('edit_setting_name').value = name;
+        document.getElementById('edit_min_conf').value = min_conf;
+        document.getElementById('edit_min_d_detect').value = min_d_detect;
+        document.getElementById('edit_min_d_save').value = min_d_save;
+        document.getElementById('edit_particle_bb_dimension_factor').value = bb_factor;
+        document.getElementById('edit_est_particle_volume_x').value = vol_x;
+        document.getElementById('edit_est_particle_volume_exp').value = vol_exp;
+        document.getElementById('editForm').action = '{{ url_for("camera.update_camera_settings", setting_name="") }}'.replace('setting_name=', 'setting_name=' + name);
+        document.getElementById('editSettingsForm').style.display = 'block';
+    }
+
+    function cancelEdit() {
+        document.getElementById('editSettingsForm').style.display = 'none';
+    }
+
+    async function toggleThread(type, id, btn) {
+        const threadId = `${type}_${id}`;
+        const row = btn.closest('tr');
+        const selects = row.querySelectorAll('select');
+        const modelValue = selects[0].value;
+        const classifierValue = selects[1].value;
+        const settingsValue = selects[2].value;
+        
+        if (btn.textContent === 'Start Thread') {
+            // Start thread
+            try {
+                const response = await fetch('/start-thread', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        type: type,
+                        id: id,
+                        model: modelValue,
+                        classifier: classifierValue,
+                        settings: settingsValue
+                    })
+                });
+                
+                if (response.ok) {
+                    btn.textContent = 'Stop Thread';
+                    btn.style.backgroundColor = '#ff4444';
+                } else {
+                    const error = await response.json();
+                    alert('Error starting thread: ' + (error.error || 'Unknown error'));
+                }
+            } catch (error) {
+                alert('Error starting thread: ' + error);
+            }
+        } else {
+            // Stop thread
+            try {
+                const response = await fetch('/stop-thread', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        thread_id: threadId
+                    })
+                });
+                
+                if (response.ok) {
+                    btn.textContent = 'Start Thread';
+                    btn.style.backgroundColor = '';
+                } else {
+                    alert('Error stopping thread');
+                }
+            } catch (error) {
+                alert('Error stopping thread: ' + error);
+            }
+        }
+    }
+    
+    // Update thread button states periodically
+    async function updateThreadStates() {
+        try {
+            const response = await fetch('/active-threads');
+            const threads = await response.json();
+            
+            // Create a set of active thread IDs
+            const activeThreadIds = new Set(threads.filter(t => t.running).map(t => t.thread_id));
+            
+            // Update all thread buttons
+            document.querySelectorAll('.thread-btn').forEach(btn => {
+                const threadId = btn.getAttribute('data-thread-id');
+                if (activeThreadIds.has(threadId)) {
+                    btn.textContent = 'Stop Thread';
+                    btn.style.backgroundColor = '#ff4444';
+                } else {
+                    btn.textContent = 'Start Thread';
+                    btn.style.backgroundColor = '';
+                }
+            });
+        } catch (error) {
+            console.error('Error updating thread states:', error);
+        }
+    }
+    
+    // Update thread states every 3 seconds
+    setInterval(updateThreadStates, 3000);
+
+</script>
+{% endblock %}

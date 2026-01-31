@@ -2,96 +2,375 @@ from flask import Blueprint, render_template, Response, jsonify, request, redire
 import requests
 import cv2
 import numpy as np
-from computer_vision.ml_model_image_processor import object_process_image
+import threading
+import time
+from datetime import datetime
+from computer_vision.ml_model_image_processor import object_process_image, CameraSettings
 from computer_vision.classifier_image_processor import classifier_process_image
-import torch
-import torchvision.transforms as transforms
+from storage_data.store_data_manager import store_data_manager
+from sqlite.video_stream_sqlite_provider import video_stream_provider
+from iris_communication.iris_input_processor import iris_input_processor
+from iris_communication.sftp_processor import sftp_processor
+from sqlite.sftp_sqlite_provider import sftp_provider
 
 CAMERA_URL = "http://localhost:5001/video"
 
-# Constants for processing
-min_conf = 0.8
-pixels_per_mm = 1 / (900 / 240)
-particle_bb_dimension_factor = 0.9
-est_particle_volume_x = 0.00000000008357470139
-est_particle_volume_exp = 3.02511466443
-class_names = ['0', '2', '1']
-transform = transforms.Compose([transforms.Resize((150, 150)),
-                                transforms.ToTensor(),
-                                transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
+# Processing interval in seconds - controls how often frames are processed with ML models
+PROCESSING_INTERVAL_SECONDS = 1.0  # Process every 1 second
 
-def generate_frames(model_param=None, classifier_param=None):
-    ml_model = None
-    classifier_model = None
-    if model_param:
-        name, version = model_param.split(':', 1) if ':' in model_param else (model_param, '1.0.0')
-        from sqlite.ml_sqlite_provider import ml_provider
-        ml_model = ml_provider.load_ml_model(name, version)
-    if classifier_param:
-        name, version = classifier_param.split(':', 1) if ':' in classifier_param else (classifier_param, '1.0.0')
-        if not 'ml_provider' in locals():
-            from sqlite.ml_sqlite_provider import ml_provider
-        classifier_model = ml_provider.load_ml_model(name, version)
-    
+# Global dictionary to track active video processing threads
+active_threads = {}
+thread_lock = threading.Lock()
+
+def generate_frames():
     r = requests.get(CAMERA_URL, stream=True)
-    boundary = b'--frame'
-    buffer = b''
-    for chunk in r.iter_content(chunk_size=8192):
-        buffer += chunk
-        while boundary in buffer:
-            start = buffer.find(boundary)
-            end = buffer.find(boundary, start + 1)
-            if end == -1:
-                break
-            frame_data = buffer[start:end]
-            buffer = buffer[end:]
-            # extract jpeg
-            header_end = frame_data.find(b'\r\n\r\n')
-            if header_end != -1:
-                jpeg_start = header_end + 4
-                jpeg_end = frame_data.find(b'\r\n', jpeg_start)
-                if jpeg_end == -1:
-                    jpeg_data = frame_data[jpeg_start:]
-                else:
-                    jpeg_data = frame_data[jpeg_start:jpeg_end]
-                # decode
-                nparr = np.frombuffer(jpeg_data, np.uint8)
-                img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-                if img is not None:
-                    # process
-                    if ml_model:
-                        result = object_process_image(img.copy(), ml_model, min_conf, pixels_per_mm, particle_bb_dimension_factor, est_particle_volume_x, est_particle_volume_exp)
-                        # annotate
-                        for i, box in enumerate(result[1]):
-                            cv2.rectangle(img, (int(box[0]), int(box[1])), (int(box[2]), int(box[3])), (255, 0, 0), 2)
-                            cv2.putText(img, f'{result[7][i]}mm', (int(box[0]), int(box[1]-10)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,0,0), 1)
-                    if classifier_model:
-                        belt_status = classifier_process_image(img.copy(), classifier_model, class_names, transform)
-                        cv2.putText(img, f'Status: {belt_status}', (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0,255,0), 2)
-                    # re-encode
-                    _, encoded_img = cv2.imencode('.jpg', img)
-                    yield (b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' + encoded_img.tobytes() + b'\r\n')
-                else:
-                    yield frame_data + b'\r\n'
-    if buffer:
-        yield buffer
+    return Response(r.iter_content(chunk_size=1024),
+                    mimetype='multipart/x-mixed-replace; boundary=frame')
 
-def generate_legacy_frames(url, model_param=None, classifier_param=None):
-    ml_model = None
-    classifier_model = None
-    if model_param:
-        name, version = model_param.split(':', 1) if ':' in model_param else (model_param, '1.0.0')
-        from sqlite.ml_sqlite_provider import ml_provider
-        ml_model = ml_provider.load_ml_model(name, version)
-    if classifier_param:
-        name, version = classifier_param.split(':', 1) if ':' in classifier_param else (classifier_param, '1.0.0')
-        if not 'ml_provider' in locals():
-            from sqlite.ml_sqlite_provider import ml_provider
-        classifier_model = ml_provider.load_ml_model(name, version)
+def process_video_stream_background(thread_id, url, model_id=None, classifier_id=None, settings_id=None):
+    """
+    Process video stream in background thread.
+    
+    Args:
+        thread_id: Unique identifier for this thread
+        url: URL of the video stream
+        model_id: Optional model identifier (name:version)
+        classifier_id: Optional classifier identifier (name:version)
+        settings_id: Optional settings identifier (name)
+    """
+    # Lazy-load models only when needed (not at thread start)
+    # This reduces memory usage when models aren't actively processing
+    model = None
+    settings = None
+    model_loaded = False
+    
+    # Get project title and settings once before processing frames
+    from sqlite.project_settings_sqlite_provider import project_settings_provider
+    project_settings = project_settings_provider.get_project_settings()
+    project_title = project_settings.title if project_settings else "default"
+    
+    # Debug logging for IRIS configuration
+    if project_settings:
+        print(f"[IRIS] Project settings loaded: {project_title}")
+        print(f"[IRIS] Main folder: {project_settings.iris_main_folder}")
+        print(f"[IRIS] Model subfolder: {project_settings.iris_model_subfolder}")
+        print(f"[IRIS] Classifier subfolder: {project_settings.iris_classifier_subfolder}")
+        print(f"[IRIS] Image processing interval: {project_settings.image_processing_interval}s")
+        processing_interval = project_settings.image_processing_interval
+    else:
+        print(f"[IRIS] Warning: No project settings found!")
+        processing_interval = PROCESSING_INTERVAL_SECONDS  # Fallback to hardcoded value
+    
+    frame_count = 0
+    last_model_processing_time = 0  # Track last time model was run
+    last_classifier_processing_time = 0  # Track last time classifier was run
+    last_frame_save_time = 0  # Track last time frame was saved
+    
+    # Track previous CSV paths for SFTP upload
+    previous_model_csv_path = None
+    previous_classifier_csv_path = None
+    
+    # Get SFTP server info (use the first one if available)
+    sftp_server_info = None
+    try:
+        all_sftp_servers = sftp_provider.get_all_servers()
+        if all_sftp_servers and len(all_sftp_servers) > 0:
+            sftp_server_info = all_sftp_servers[0]
+            print(f"[SFTP] Using SFTP server: {sftp_server_info.server_name}")
+        else:
+            print(f"[SFTP] No SFTP server configured. Files will not be uploaded.")
+    except Exception as e:
+        print(f"[SFTP] Error loading SFTP server info: {e}")
+    
+    with thread_lock:
+        if thread_id in active_threads:
+            active_threads[thread_id]['status'] = 'running'
+            active_threads[thread_id]['frame_count'] = 0
+    
+    # Create a session that can be closed from outside
+    session = requests.Session()
+    current_request = None
+    
+    # Store session in thread info so we can close it externally
+    with thread_lock:
+        if thread_id in active_threads:
+            active_threads[thread_id]['session'] = session
+    
+    try:
+        while True:
+            # Check if thread should stop
+            with thread_lock:
+                if thread_id not in active_threads or not active_threads[thread_id]['running']:
+                    break
+            
+            try:
+                # Use timeout only for connection, not for reading stream (None for read timeout)
+                current_request = session.get(url, stream=True, timeout=(5, None))
+                r = current_request
+                boundary = b'--frame'
+                buffer = b''
+                
+                # Process chunks with periodic stop checks
+                chunk_count = 0
+                for chunk in r.iter_content(chunk_size=8192):
+                    chunk_count += 1
+                    
+                    # Check stop flag every 10 chunks (not on every chunk for performance)
+                    if chunk_count % 10 == 0:
+                        with thread_lock:
+                            if thread_id not in active_threads or not active_threads[thread_id]['running']:
+                                r.close()
+                                break
+                    
+                    buffer += chunk
+                    while boundary in buffer:
+                        start = buffer.find(boundary)
+                        end = buffer.find(boundary, start + 1)
+                        if end == -1:
+                            break
+                        
+                        frame_data = buffer[start:end]
+                        buffer = buffer[end:]
+                        
+                        # Extract JPEG image from frame
+                        header_end = frame_data.find(b'\r\n\r\n')
+                        if header_end != -1:
+                            jpeg_start = header_end + 4
+                            jpeg_end = frame_data.find(b'\r\n', jpeg_start)
+                            if jpeg_end == -1:
+                                jpeg_data = frame_data[jpeg_start:]
+                            else:
+                                jpeg_data = frame_data[jpeg_start:jpeg_end]
+                            
+                            # Decode JPEG to numpy array
+                            nparr = np.frombuffer(jpeg_data, np.uint8)
+                            img2d = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+                            
+                            if img2d is not None:
+                                # Save frame to storage directory and database at the same interval as processing
+                                current_time = time.time()
+                                if current_time - last_frame_save_time >= processing_interval:
+                                    try:
+                                        timestamp = datetime.now()
+                                        filename = f"frame_{timestamp.strftime('%Y%m%d_%H%M%S_%f')}.jpg"
+                                        
+                                        # Save the frame to disk with session tracking
+                                        filepath = store_data_manager.save_frame(img2d, session_key=thread_id, filename=filename)
+                                        
+                                        if filepath:
+                                            # Insert frame record into database with project_id_camera_id format
+                                            try:
+                                                full_camera_id = f"{project_title}_{thread_id}"
+                                                video_stream_provider.insert_segment(
+                                                    camera_id=full_camera_id,
+                                                    start_time=timestamp,
+                                                    file_path=filepath
+                                                )
+                                            except Exception as e:
+                                                print(f"Error inserting frame record to database: {e}")
+                                        
+                                        # Update last frame save time
+                                        last_frame_save_time = current_time
+                                    except Exception as e:
+                                        print(f"Error saving frame: {e}")
+                                
+                                # Lazy-load model only when we need to process
+                                if model_id and not model_loaded:
+                                    from computer_vision.ml_model_image_processor import get_model_from_database, get_camera_settings
+                                    try:
+                                        print(f"[Model] Lazy-loading model: {model_id}")
+                                        model = get_model_from_database(model_id)
+                                        settings = get_camera_settings(settings_id)
+                                        model_loaded = True
+                                        print(f"[Model] Model loaded successfully")
+                                    except Exception as e:
+                                        print(f"Error loading model or settings: {e}")
+                                        model = None
+                                        settings = None
+                                
+                                # Process with ML models if specified
+                                if model is not None:
+                                    # Check if processing interval has elapsed
+                                    current_time = time.time()
+                                    if current_time - last_model_processing_time >= processing_interval:
+                                        print(f"[Processing] Model processing frame at {current_time:.2f}, interval: {current_time - last_model_processing_time:.2f}s")
+                                        try:
+                                            # Use processing time for CSV timestamp
+                                            processing_timestamp = datetime.now()
+                                            result = object_process_image(img2d.copy(), model=model, settings=settings)
+                                            frame_count += 1
+                                            
+                                            # Generate IRIS input CSV for result with processing timestamp
+                                            csv_path = iris_input_processor.generate_iris_input_data(
+                                                project_settings=project_settings,
+                                                timestamp=processing_timestamp,
+                                                data=result,
+                                                folder_type='model',
+                                                image_filename=filename
+                                            )
+                                            
+                                            # If a new CSV was created and we have a previous one, upload the previous via SFTP
+                                            if csv_path and csv_path != previous_model_csv_path:
+                                                if previous_model_csv_path and sftp_server_info:
+                                                    try:
+                                                        print(f"[SFTP] Uploading previous model CSV: {previous_model_csv_path}")
+                                                        upload_result = sftp_processor.transferData(
+                                                            sftp_server_info=sftp_server_info,
+                                                            file_path=previous_model_csv_path,
+                                                            project_settings=project_settings,
+                                                            folder_type='model'
+                                                        )
+                                                        if upload_result['success']:
+                                                            print(f"[SFTP] Successfully uploaded: {upload_result['remote_path']}")
+                                                        else:
+                                                            print(f"[SFTP] Upload failed: {upload_result.get('error', 'Unknown error')}")
+                                                    except Exception as e:
+                                                        print(f"[SFTP] Error uploading model CSV: {e}")
+                                                
+                                                # Update to current CSV path
+                                                previous_model_csv_path = csv_path
+                                            
+                                            # Update last processing time
+                                            last_model_processing_time = current_time
+                                        except Exception as e:
+                                            print(f"Error processing with model: {e}")
+                                
+                                if classifier_id:
+                                    # Check if processing interval has elapsed
+                                    current_time = time.time()
+                                    if current_time - last_classifier_processing_time >= processing_interval:
+                                        print(f"[Processing] Classifier processing frame at {current_time:.2f}, interval: {current_time - last_classifier_processing_time:.2f}s")
+                                        try:
+                                            # Use processing time for CSV timestamp
+                                            processing_timestamp = datetime.now()
+                                            belt_status = classifier_process_image(img2d.copy(), classifier_id=classifier_id)
+                                            frame_count += 1
+                                            
+                                            # Generate IRIS input CSV for belt status with processing timestamp
+                                            csv_path = iris_input_processor.generate_iris_input_data(
+                                                project_settings=project_settings,
+                                                timestamp=processing_timestamp,
+                                                data=belt_status,
+                                                folder_type='classifier'
+                                            )
+                                            
+                                            # If a new CSV was created and we have a previous one, upload the previous via SFTP
+                                            if csv_path and csv_path != previous_classifier_csv_path:
+                                                if previous_classifier_csv_path and sftp_server_info:
+                                                    try:
+                                                        print(f"[SFTP] Uploading previous classifier CSV: {previous_classifier_csv_path}")
+                                                        upload_result = sftp_processor.transferData(
+                                                            sftp_server_info=sftp_server_info,
+                                                            file_path=previous_classifier_csv_path,
+                                                            project_settings=project_settings,
+                                                            folder_type='classifier'
+                                                        )
+                                                        if upload_result['success']:
+                                                            print(f"[SFTP] Successfully uploaded: {upload_result['remote_path']}")
+                                                        else:
+                                                            print(f"[SFTP] Upload failed: {upload_result.get('error', 'Unknown error')}")
+                                                    except Exception as e:
+                                                        print(f"[SFTP] Error uploading classifier CSV: {e}")
+                                                
+                                                # Update to current CSV path
+                                                previous_classifier_csv_path = csv_path
+                                            
+                                            # Update last processing time
+                                            last_classifier_processing_time = current_time
+                                        except Exception as e:
+                                            print(f"Error processing with classifier: {e}")
+                                
+                                # Update frame count
+                                with thread_lock:
+                                    if thread_id in active_threads:
+                                        active_threads[thread_id]['frame_count'] = frame_count
+                                        active_threads[thread_id]['last_update'] = time.time()
+                
+                # Close the response properly
+                if current_request:
+                    current_request.close()
+                
+                # If we got here without errors, break the retry loop
+                # to avoid unnecessary reconnections
+                break
+                
+            except requests.exceptions.Timeout as e:
+                # Timeout error - don't retry, just stop
+                print(f"Timeout in thread {thread_id}: {e}")
+                break
+                
+            except Exception as e:
+                print(f"Error in thread {thread_id}: {e}")
+                # Check if thread should stop before retrying
+                with thread_lock:
+                    if thread_id not in active_threads or not active_threads[thread_id]['running']:
+                        break
+                # Don't retry on errors - just stop the thread
+                break
+    finally:
+        # Clean up resources
+        print(f"[Cleanup] Stopping thread {thread_id}")
+        
+        # Explicitly delete model to free memory
+        if model is not None:
+            try:
+                del model
+                del settings
+                print(f"[Cleanup] ML model unloaded from memory")
+            except:
+                pass
+        
+        # Clean up session tracking
+        try:
+            store_data_manager.end_session(thread_id)
+        except Exception as e:
+            print(f"Error ending session: {e}")
+        
+        # Close any open request
+        if current_request:
+            try:
+                current_request.close()
+            except:
+                pass
+        
+        # Close the session
+        try:
+            session.close()
+        except:
+            pass
+            
+        with thread_lock:
+            if thread_id in active_threads:
+                active_threads[thread_id]['status'] = 'stopped'
+                active_threads[thread_id]['running'] = False
+                # Remove session reference
+                active_threads[thread_id].pop('session', None)
+
+def process_video_stream(url, model_id=None, classifier_id=None, settings_id=None):
+    """
+    Process video stream from camera server with ML models.
+    
+    Args:
+        url: URL of the video stream
+        model_id: Optional model identifier (name:version)
+        classifier_id: Optional classifier identifier (name:version)
+        settings_id: Optional settings identifier (name)
+    """
+    # Load model and settings once before processing stream to avoid repeated database calls
+    model = None
+    settings = None
+    if model_id:
+        from computer_vision.ml_model_image_processor import get_model_from_database, get_camera_settings
+        try:
+            model = get_model_from_database(model_id)
+            settings = get_camera_settings(settings_id)  # Use specified settings or default
+        except Exception as e:
+            print(f"Error loading model or settings: {e}")
     
     r = requests.get(url, stream=True)
     boundary = b'--frame'
     buffer = b''
+    
     for chunk in r.iter_content(chunk_size=8192):
         buffer += chunk
         while boundary in buffer:
@@ -99,9 +378,11 @@ def generate_legacy_frames(url, model_param=None, classifier_param=None):
             end = buffer.find(boundary, start + 1)
             if end == -1:
                 break
+            
             frame_data = buffer[start:end]
             buffer = buffer[end:]
-            # extract jpeg
+            
+            # Extract JPEG image from frame
             header_end = frame_data.find(b'\r\n\r\n')
             if header_end != -1:
                 jpeg_start = header_end + 4
@@ -110,25 +391,42 @@ def generate_legacy_frames(url, model_param=None, classifier_param=None):
                     jpeg_data = frame_data[jpeg_start:]
                 else:
                     jpeg_data = frame_data[jpeg_start:jpeg_end]
-                # decode
+                
+                # Decode JPEG to numpy array
                 nparr = np.frombuffer(jpeg_data, np.uint8)
-                img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-                if img is not None:
-                    # process
-                    if ml_model:
-                        result = object_process_image(img.copy(), ml_model, min_conf, pixels_per_mm, particle_bb_dimension_factor, est_particle_volume_x, est_particle_volume_exp)
-                        # annotate
-                        for i, box in enumerate(result[1]):
-                            cv2.rectangle(img, (int(box[0]), int(box[1])), (int(box[2]), int(box[3])), (255, 0, 0), 2)
-                            cv2.putText(img, f'{result[7][i]}mm', (int(box[0]), int(box[1]-10)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,0,0), 1)
-                    if classifier_model:
-                        belt_status = classifier_process_image(img.copy(), classifier_model, class_names, transform)
-                        cv2.putText(img, f'Status: {belt_status}', (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0,255,0), 2)
-                    # re-encode
-                    _, encoded_img = cv2.imencode('.jpg', img)
+                img2d = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+                
+                if img2d is not None:
+                    # Process with ML models if specified
+                    if model is not None:
+                        try:
+                            result = object_process_image(img2d.copy(), model=model, settings=settings)
+                            # Annotate image with detection results
+                            # result format: [image, xyxy, particles]
+                            particles = result[2]
+                            for i, box in enumerate(result[1]):
+                                cv2.rectangle(img2d, (int(box[0]), int(box[1])), (int(box[2]), int(box[3])), (255, 0, 0), 2)
+                                cv2.putText(img2d, f'{particles[i].max_d_mm}mm', (int(box[0]), int(box[1]-10)), 
+                                          cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 1)
+                        except Exception as e:
+                            print(f"Error processing with model: {e}")
+                    
+                    if classifier_id:
+                        try:
+                            belt_status = classifier_process_image(img2d.copy(), classifier_id=classifier_id)
+                            cv2.putText(img2d, f'Status: {belt_status}', (10, 30), 
+                                      cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+                        except Exception as e:
+                            print(f"Error processing with classifier: {e}")
+                    
+                    # Re-encode processed image
+                    _, encoded_img = cv2.imencode('.jpg', img2d)
                     yield (b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' + encoded_img.tobytes() + b'\r\n')
                 else:
+                    # If decode failed, pass through original frame
                     yield frame_data + b'\r\n'
+    
+    # Yield any remaining buffer
     if buffer:
         yield buffer
 
@@ -138,21 +436,57 @@ camera_bp = Blueprint('camera', __name__)
 def video():
     model_param = request.args.get('model')
     classifier_param = request.args.get('classifier')
-    return generate_frames(model_param, classifier_param)
+    settings_param = request.args.get('settings')
+    
+    # If no processing is requested, use simple passthrough
+    if not model_param and not classifier_param:
+        return generate_frames()
+    
+    # Otherwise use processing pipeline
+    return Response(process_video_stream(CAMERA_URL, model_param, classifier_param, settings_param),
+                   mimetype='multipart/x-mixed-replace; boundary=frame')
 
 @camera_bp.route('/legacy-camera-video/<int:device_id>')
 def legacy_camera_video(device_id):
     model_param = request.args.get('model')
     classifier_param = request.args.get('classifier')
+    settings_param = request.args.get('settings')
     url = f"http://localhost:5002/camera-video/{device_id}"
-    return generate_legacy_frames(url, model_param, classifier_param)
+    
+    # If no processing is requested, use simple passthrough
+    if not model_param and not classifier_param:
+        r = requests.get(url, stream=True)
+        return Response(r.iter_content(chunk_size=1024),
+                       mimetype='multipart/x-mixed-replace; boundary=frame')
+    
+    # Otherwise use processing pipeline
+    return Response(process_video_stream(url, model_param, classifier_param, settings_param),
+                   mimetype='multipart/x-mixed-replace; boundary=frame')
+
+@camera_bp.route('/simulator-video')
+def simulator_video():
+    model_param = request.args.get('model')
+    classifier_param = request.args.get('classifier')
+    settings_param = request.args.get('settings')
+    url = "http://localhost:5003/video/simulator"
+    
+    # If no processing is requested, use simple passthrough
+    if not model_param and not classifier_param:
+        r = requests.get(url, stream=True)
+        return Response(r.iter_content(chunk_size=1024),
+                       mimetype='multipart/x-mixed-replace; boundary=frame')
+    
+    # Otherwise use processing pipeline
+    return Response(process_video_stream(url, model_param, classifier_param, settings_param),
+                   mimetype='multipart/x-mixed-replace; boundary=frame')
 
 @camera_bp.route('/connected-devices')
 def connected_devices():
     devices = []
+    
+    # Query legacy-camera-server
     try:
-        # Query legacy-camera-server
-        legacy_response = requests.get('http://localhost:5002/devices', timeout=5)
+        legacy_response = requests.get('http://localhost:5002/devices', timeout=3)
         if legacy_response.status_code == 200:
             legacy_devices = legacy_response.json()
             for dev in legacy_devices:
@@ -163,12 +497,12 @@ def connected_devices():
                     'ip': dev['info'].split(';')[0] if ';' in dev['info'] else 'unknown',
                     'status': dev['status']
                 })
-    except:
+    except Exception as e:
         pass  # Server not running or error
 
+    # Query webcam-server
     try:
-        # Query webcam-server
-        webcam_response = requests.get('http://localhost:5001/devices', timeout=5)
+        webcam_response = requests.get('http://localhost:5001/devices', timeout=3)
         if webcam_response.status_code == 200:
             webcam_devices = webcam_response.json()
             for dev in webcam_devices:
@@ -179,8 +513,24 @@ def connected_devices():
                     'ip': 'localhost',
                     'status': dev['status']
                 })
-    except:
-        pass
+    except Exception as e:
+        pass  # Server not running or error
+
+    # Query simulator-server
+    try:
+        simulator_response = requests.get('http://localhost:5003/devices', timeout=3)
+        if simulator_response.status_code == 200:
+            simulator_devices = simulator_response.json()
+            for dev in simulator_devices:
+                devices.append({
+                    'type': 'simulator',
+                    'id': dev['id'],
+                    'info': dev['info'],
+                    'ip': 'localhost',
+                    'status': dev['status']
+                })
+    except Exception as e:
+        pass  # Server not running or error
 
     return jsonify(devices)
 
@@ -197,44 +547,49 @@ def camera_manager():
 def add_camera_settings():
     from sqlite.camera_settings_sqlite_provider import camera_settings_provider
 
+    # Extract form data
     name = request.form.get('name')
+    if not name:
+        return "Name is required", 400
+    
+    # Use CameraSettings class to define defaults and extract values
     min_conf = float(request.form.get('min_conf', 0.8))
     min_d_detect = int(request.form.get('min_d_detect', 200))
     min_d_save = int(request.form.get('min_d_save', 200))
     particle_bb_dimension_factor = float(request.form.get('particle_bb_dimension_factor', 0.9))
     est_particle_volume_x = float(request.form.get('est_particle_volume_x', 8.357470139e-11))
     est_particle_volume_exp = float(request.form.get('est_particle_volume_exp', 3.02511466443))
-
-    if not name:
-        return "Name is required", 400
-
-    camera_settings_provider.insert_settings(name, min_conf, min_d_detect, min_d_save, particle_bb_dimension_factor, est_particle_volume_x, est_particle_volume_exp)
+    
+    camera_settings_provider.insert_settings(
+        name, 
+        min_conf, 
+        min_d_detect, 
+        min_d_save, 
+        particle_bb_dimension_factor, 
+        est_particle_volume_x, 
+        est_particle_volume_exp
+    )
     return redirect(url_for('camera.camera_manager'))
 
 @camera_bp.route('/update-camera-settings/<setting_name>', methods=['POST'])
 def update_camera_settings(setting_name):
     from sqlite.camera_settings_sqlite_provider import camera_settings_provider
 
-    min_conf = request.form.get('min_conf')
-    min_d_detect = request.form.get('min_d_detect')
-    min_d_save = request.form.get('min_d_save')
-    particle_bb_dimension_factor = request.form.get('particle_bb_dimension_factor')
-    est_particle_volume_x = request.form.get('est_particle_volume_x')
-    est_particle_volume_exp = request.form.get('est_particle_volume_exp')
-
+    # Define update fields mapping
+    update_fields = [
+        ('min_conf', float),
+        ('min_d_detect', int),
+        ('min_d_save', int),
+        ('particle_bb_dimension_factor', float),
+        ('est_particle_volume_x', float),
+        ('est_particle_volume_exp', float)
+    ]
+    
     updates = {}
-    if min_conf:
-        updates['min_conf'] = float(min_conf)
-    if min_d_detect:
-        updates['min_d_detect'] = int(min_d_detect)
-    if min_d_save:
-        updates['min_d_save'] = int(min_d_save)
-    if particle_bb_dimension_factor:
-        updates['particle_bb_dimension_factor'] = float(particle_bb_dimension_factor)
-    if est_particle_volume_x:
-        updates['est_particle_volume_x'] = float(est_particle_volume_x)
-    if est_particle_volume_exp:
-        updates['est_particle_volume_exp'] = float(est_particle_volume_exp)
+    for field_name, field_type in update_fields:
+        value = request.form.get(field_name)
+        if value:
+            updates[field_name] = field_type(value)
 
     camera_settings_provider.update_settings(setting_name, **updates)
     return redirect(url_for('camera.camera_manager'))
@@ -244,3 +599,148 @@ def delete_camera_settings(setting_name):
     from sqlite.camera_settings_sqlite_provider import camera_settings_provider
     camera_settings_provider.delete_settings(setting_name)
     return redirect(url_for('camera.camera_manager'))
+
+@camera_bp.route('/start-thread', methods=['POST'])
+def start_thread():
+    data = request.get_json()
+    device_type = data.get('type')
+    device_id = data.get('id')
+    model_id = data.get('model')
+    classifier_id = data.get('classifier')
+    settings_id = data.get('settings')
+    
+    # Create unique thread ID
+    thread_id = f"{device_type}_{device_id}"
+    
+    # Check if thread already exists
+    with thread_lock:
+        if thread_id in active_threads and active_threads[thread_id]['running']:
+            return jsonify({'error': 'Thread already running for this device'}), 400
+    
+    # Determine URL based on device type
+    if device_type == 'legacy':
+        url = f"http://localhost:5002/camera-video/{device_id}"
+    elif device_type == 'simulator':
+        url = "http://localhost:5003/video/simulator"
+    else:  # webcam
+        url = "http://localhost:5001/video"
+    
+    # Create and start thread
+    thread = threading.Thread(
+        target=process_video_stream_background,
+        args=(thread_id, url, model_id, classifier_id, settings_id),
+        daemon=True
+    )
+    
+    with thread_lock:
+        active_threads[thread_id] = {
+            'thread': thread,
+            'running': True,
+            'status': 'starting',
+            'device_type': device_type,
+            'device_id': device_id,
+            'model_id': model_id or 'None',
+            'classifier_id': classifier_id or 'None',
+            'settings_id': settings_id or 'default',
+            'url': url,
+            'frame_count': 0,
+            'start_time': time.time(),
+            'last_update': time.time()
+        }
+    
+    thread.start()
+    return jsonify({'success': True, 'thread_id': thread_id})
+
+@camera_bp.route('/stop-thread', methods=['POST'])
+def stop_thread():
+    data = request.get_json()
+    thread_id = data.get('thread_id')
+    
+    thread_obj = None
+    session_obj = None
+    
+    with thread_lock:
+        if thread_id not in active_threads:
+            return jsonify({'error': 'Thread not found'}), 404
+        
+        active_threads[thread_id]['running'] = False
+        active_threads[thread_id]['status'] = 'stopping'
+        thread_obj = active_threads[thread_id].get('thread')
+        session_obj = active_threads[thread_id].get('session')
+    
+    # Force close the session to interrupt any blocking reads
+    if session_obj:
+        try:
+            session_obj.close()
+            print(f"Closed session for thread {thread_id}")
+        except Exception as e:
+            print(f"Error closing session: {e}")
+    
+    # Wait for thread to actually stop (max 5 seconds)
+    if thread_obj and thread_obj.is_alive():
+        thread_obj.join(timeout=5)
+        if thread_obj.is_alive():
+            print(f"Warning: Thread {thread_id} did not stop gracefully")
+    
+    # Clean up thread from active_threads after stopping
+    with thread_lock:
+        if thread_id in active_threads:
+            active_threads[thread_id]['status'] = 'stopped'
+    
+    return jsonify({'success': True})
+
+@camera_bp.route('/active-threads')
+def get_active_threads():
+    threads_info = []
+    with thread_lock:
+        for thread_id, info in list(active_threads.items()):
+            # Remove stopped threads that have been stopped for more than 60 seconds
+            if not info['running'] and time.time() - info.get('last_update', 0) > 60:
+                del active_threads[thread_id]
+                continue
+            
+            threads_info.append({
+                'thread_id': thread_id,
+                'device_type': info['device_type'],
+                'device_id': info['device_id'],
+                'model_id': info['model_id'],
+                'classifier_id': info['classifier_id'],
+                'settings_id': info['settings_id'],
+                'status': info['status'],
+                'running': info['running'],
+                'frame_count': info['frame_count'],
+                'uptime': int(time.time() - info['start_time']),
+            })
+    
+    return jsonify(threads_info)
+
+@camera_bp.route('/system-resources')
+def get_system_resources():
+    """Monitor system resource usage for debugging performance issues."""
+    import psutil
+    import os
+    
+    # Get process info
+    process = psutil.Process(os.getpid())
+    
+    # Memory info
+    memory_info = process.memory_info()
+    memory_mb = memory_info.rss / 1024 / 1024
+    
+    # CPU info
+    cpu_percent = process.cpu_percent(interval=0.1)
+    
+    # Thread count
+    thread_count = process.num_threads()
+    
+    # Active processing threads
+    with thread_lock:
+        active_count = sum(1 for t in active_threads.values() if t['running'])
+    
+    return jsonify({
+        'memory_mb': round(memory_mb, 2),
+        'cpu_percent': cpu_percent,
+        'thread_count': thread_count,
+        'active_processing_threads': active_count,
+        'total_threads_tracked': len(active_threads)
+    })

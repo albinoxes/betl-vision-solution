@@ -1,63 +1,94 @@
-<!DOCTYPE html>
-<html>
-    <head>
-        <title>Belt Vision App</title>
-    </head>
-    <body>
-        <h1>Belt Vision Board</h1>
-        <button class="btn" type="button" onclick="window.location.href='{{ url_for('camera.camera_manager') }}';">Go to the camera-manager</button><br/>
-        <button class="btn" type="button" onclick="window.location.href='{{ url_for('ml.model_manager') }}';">Manage ML Models</button><br/>
-        <button class="btn" type="button" onclick="window.location.href='{{ url_for('participants.join') }}';">Fill form to get updates</button><br/>
-        <button class="btn" type="button" onclick="window.location.href='{{ url_for('participants.participants') }}';">Check participant list</button><br/>
+{% extends "base.html" %}
 
-        <button id="toggleVideo" class="btn" type="button">Start Webcam Video</button><br/>
-        <img id="webcamVideoFeed" width="640" style="display:none" alt="Video feed will appear here"><br/>
+{% block title %}Belt Vision - Home{% endblock %}
+{% block nav_home %}active{% endblock %}
 
-        <script>
-            (function(){
-                const btn = document.getElementById('toggleVideo');
-                const img = document.getElementById('webcamVideoFeed');
-                let running = false;
+{% block content %}
+<div class="project-info">
+    <h1 id="projectTitle">Belt Vision</h1>
+    <p id="projectDescription">Monitor active video processing threads.</p>
+    <p class="vm-info"><strong>VM Number:</strong> <span id="vmNumber">-</span></p>
+</div>
 
-                btn.addEventListener('click', function(){
-                    if (!running) {
-                        img.src = '/video';
-                        img.style.display = 'block';
-                        btn.textContent = 'Stop Video';
-                        running = true;
-                    } else {
-                        img.removeAttribute('src');
-                        img.style.display = 'none';
-                        btn.textContent = 'Start Video';
-                        running = false;
-                    }
+<h2>Active Video Threads</h2>
+<button onclick="refreshThreads()">Refresh</button><br/><br/>
+<table border="1" id="activeThreadsTable">
+    <thead>
+        <tr>
+            <th>Thread ID</th>
+            <th>Device Type</th>
+            <th>Device ID</th>
+            <th>Model</th>
+            <th>Classifier</th>
+            <th>Settings</th>
+            <th>Status</th>
+            <th>Frames Processed</th>
+            <th>Uptime (seconds)</th>
+        </tr>
+    </thead>
+    <tbody id="threadsTableBody">
+        <tr>
+            <td colspan="9" style="text-align:center;">No active threads</td>
+        </tr>
+    </tbody>
+</table>
+{% endblock %}
+
+{% block additional_scripts %}
+<script>
+    async function loadProjectInfo() {
+        try {
+            const response = await fetch('/project-settings');
+            if (response.ok) {
+                const settings = await response.json();
+                document.getElementById('projectTitle').textContent = settings.title || 'Belt Vision';
+                document.getElementById('projectDescription').textContent = settings.description || 'Monitor active video processing threads.';
+                document.getElementById('vmNumber').textContent = settings.vm_number || '-';
+            }
+        } catch (error) {
+            console.error('Error loading project info:', error);
+        }
+    }
+
+    async function refreshThreads() {
+        try {
+            const response = await fetch('/active-threads');
+            const threads = await response.json();
+            const tableBody = document.getElementById('threadsTableBody');
+            tableBody.innerHTML = '';
+            
+            if (threads.length === 0) {
+                tableBody.innerHTML = '<tr><td colspan="9" style="text-align:center;">No active threads</td></tr>';
+            } else {
+                threads.forEach(thread => {
+                    const row = document.createElement('tr');
+                    const statusColor = thread.running ? (thread.status === 'running' ? '#90EE90' : '#FFD700') : '#FFB6C6';
+                    row.innerHTML = `
+                        <td>${thread.thread_id}</td>
+                        <td>${thread.device_type}</td>
+                        <td>${thread.device_id}</td>
+                        <td>${thread.model_id}</td>
+                        <td>${thread.classifier_id}</td>
+                        <td>${thread.settings_id}</td>
+                        <td style="background-color:${statusColor};">${thread.status}</td>
+                        <td>${thread.frame_count}</td>
+                        <td>${thread.uptime}</td>
+                    `;
+                    tableBody.appendChild(row);
                 });
-            })();
-        </script>
-
-        <button id="toggleLegacyVideo" class="btn" type="button">Start Legacy Camera Video</button><br/>
-        <img id="legacyVideoFeed" width="640" style="display:none" alt="Video feed will appear here">
-
-                <script>
-            (function(){
-                const btn = document.getElementById('toggleLegacyVideo');
-                const img = document.getElementById('legacyVideoFeed');
-                let running = false;
-
-                btn.addEventListener('click', function(){
-                    if (!running) {
-                        img.src = '/legacy-camera-video';
-                        img.style.display = 'block';
-                        btn.textContent = 'Stop Legacy Camera Video';
-                        running = true;
-                    } else {
-                        img.removeAttribute('src');
-                        img.style.display = 'none';
-                        btn.textContent = 'Start Legacy Camera Video';
-                        running = false;
-                    }
-                });
-            })();
-        </script>
-    </body>
-</html>
+            }
+        } catch (error) {
+            console.error('Error fetching threads:', error);
+        }
+    }
+    
+    // Refresh threads every 2 seconds
+    setInterval(refreshThreads, 2000);
+    
+    // Initial load
+    window.onload = function() {
+        loadProjectInfo();
+        refreshThreads();
+    };
+</script>
+{% endblock %}

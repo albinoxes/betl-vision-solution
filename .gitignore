@@ -4,3 +4,9 @@ legacy-camera-server/legacy_cam_env
 flask_env
 legacy_cam_env
 webcam_env
+flask-client/computer_vision/__pycache__
+flask-client/sqlite/__pycache__
+simulator_env
+flask-client/controllers/__pycache__
+flask-client/storage_data/__pycache__/store_data_manager.cpython-312.pyc
+flask-client/iris_communication/__pycache__

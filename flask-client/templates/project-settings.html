@@ -1,0 +1,873 @@
+{% extends "base.html" %}
+
+{% block title %}Belt Vision - Project Settings{% endblock %}
+{% block nav_project %}active{% endblock %}
+
+{% block additional_css %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/project-settings.css') }}">
+{% endblock %}
+
+{% block content %}
+<h1>Project Settings</h1>
+<p>Configure your project information and settings.</p>
+
+<div class="settings-layout">
+    <div class="settings-sidebar">
+        <nav class="settings-nav">
+            <button class="settings-nav-item active" onclick="showSection('global-settings', this)">
+                <span class="settings-nav-icon">⚙️</span>
+                <span class="settings-nav-text">Global Settings</span>
+            </button>
+            <button class="settings-nav-item" onclick="showSection('sftp-settings', this)">
+                <span class="settings-nav-icon">🔒</span>
+                <span class="settings-nav-text">SFTP Settings</span>
+            </button>
+            <button class="settings-nav-item" onclick="showSection('additional-info', this)">
+                <span class="settings-nav-icon">ℹ️</span>
+                <span class="settings-nav-text">Additional Information</span>
+            </button>
+            <button class="settings-nav-item" onclick="showSection('ml-models', this)">
+                <span class="settings-nav-icon">🤖</span>
+                <span class="settings-nav-text">Manage ML Model</span>
+            </button>
+        </nav>
+    </div>
+    
+    <div class="settings-content">
+        <div id="global-settings" class="settings-section active">
+            <h2>Global Project Settings</h2>
+
+<div class="current-settings">
+    <div class="settings-actions">
+        <button onclick="enableEditMode()" class="btn-toggle" id="editModeButton">
+            ✏️ Edit Settings
+        </button>
+        <div id="editActions" style="display: none;">
+            <button onclick="saveProjectSettings()" class="btn-save">💾 Save Changes</button>
+            <button onclick="cancelEditMode()" class="btn-cancel">❌ Cancel</button>
+        </div>
+    </div>
+    
+    <table class="settings-table" id="settingsTable">
+        <tr>
+            <th>VM Number</th>
+            <td>
+                <span class="display-value" id="display_vm_number">-</span>
+                <input type="text" class="edit-input" id="edit_vm_number" style="display: none;" required>
+            </td>
+        </tr>
+        <tr>
+            <th>Title</th>
+            <td>
+                <span class="display-value" id="display_title">-</span>
+                <input type="text" class="edit-input" id="edit_title" style="display: none;" required>
+            </td>
+        </tr>
+        <tr>
+            <th>Description</th>
+            <td>
+                <span class="display-value" id="display_description">-</span>
+                <textarea class="edit-input" id="edit_description" rows="3" style="display: none;"></textarea>
+            </td>
+        </tr>
+        <tr>
+            <th>IRIS Main Folder</th>
+            <td>
+                <span class="display-value" id="display_iris_main_folder">-</span>
+                <input type="text" class="edit-input" id="edit_iris_main_folder" style="display: none;">
+            </td>
+        </tr>
+        <tr>
+            <th>IRIS Classifier Subfolder</th>
+            <td>
+                <span class="display-value" id="display_iris_classifier_subfolder">-</span>
+                <input type="text" class="edit-input" id="edit_iris_classifier_subfolder" style="display: none;">
+            </td>
+        </tr>
+        <tr>
+            <th>IRIS Model Subfolder</th>
+            <td>
+                <span class="display-value" id="display_iris_model_subfolder">-</span>
+                <input type="text" class="edit-input" id="edit_iris_model_subfolder" style="display: none;">
+            </td>
+        </tr>
+        <tr>
+            <th>CSV Interval (seconds)</th>
+            <td>
+                <span class="display-value" id="display_csv_interval_seconds">-</span>
+                <input type="number" class="edit-input" id="edit_csv_interval_seconds" min="1" style="display: none;">
+            </td>
+        </tr>
+        <tr>
+            <th>Image Processing Interval (seconds)</th>
+            <td>
+                <span class="display-value" id="display_image_processing_interval">-</span>
+                <input type="number" class="edit-input" id="edit_image_processing_interval" min="0.1" step="0.1" style="display: none;">
+            </td>
+        </tr>
+        <tr>
+            <th>Last Updated</th>
+            <td>
+                <span class="display-value" id="display_updated_at">-</span>
+            </td>
+        </tr>
+    </table>
+    
+    <div id="settingsMessage" class="message" style="display: none;"></div>
+</div>
+
+        </div>
+        
+        <div id="sftp-settings" class="settings-section">
+            <h2>SFTP Server Configuration</h2>
+    <table class="settings-table" id="sftpTable">
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Server Name</th>
+                <th>Username</th>
+                <th>Password</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody id="sftpTableBody">
+            <tr>
+                <td colspan="5">No SFTP servers found</td>
+            </tr>
+        </tbody>
+    </table>
+    
+    <button onclick="toggleSftpForm()" class="btn-toggle" id="toggleSftpButton">
+        ▼ Add New SFTP Server
+    </button>
+    
+    <div class="sftp-form-container" id="sftpFormContainer" style="display: none;">
+        <h3 id="sftpFormTitle">Add New SFTP Server</h3>
+        <form id="sftpForm" onsubmit="saveSftpServer(event)">
+            <input type="hidden" id="sftpServerId" value="">
+            
+            <div class="form-group">
+                <label for="sftp_server_name">Server Name:</label>
+                <input type="text" id="sftp_server_name" name="sftp_server_name" required>
+                <small>SFTP server address or hostname</small>
+            </div>
+            
+            <div class="form-group">
+                <label for="sftp_username">Username:</label>
+                <input type="text" id="sftp_username" name="sftp_username" required>
+                <small>SFTP login username</small>
+            </div>
+            
+            <div class="form-group">
+                <label for="sftp_password">Password:</label>
+                <input type="password" id="sftp_password" name="sftp_password" required>
+                <small>SFTP login password</small>
+            </div>
+            
+            <div class="form-actions">
+                <button type="submit" class="btn-save">Save SFTP Server</button>
+                <button type="button" onclick="cancelSftpEdit()" class="btn-refresh">Cancel</button>
+            </div>
+        </form>
+        
+        <div id="sftpMessage" class="message" style="display: none;"></div>
+    </div>
+        </div>
+        
+        <div id="additional-info" class="settings-section">
+            <h2>Additional Information - Model Statuses</h2>
+    <table class="settings-table" id="statusTable">
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Name</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody id="statusTableBody">
+            <tr>
+                <td colspan="3">No statuses found</td>
+            </tr>
+        </tbody>
+    </table>
+    
+    <button onclick="toggleStatusForm()" class="btn-toggle" id="toggleStatusButton">
+        ▼ Add New Status
+    </button>
+    
+    <div class="status-form-container" id="statusFormContainer" style="display: none;">
+        <h3 id="statusFormTitle">Add New Status</h3>
+        <form id="statusForm" onsubmit="saveStatus(event)">
+            <input type="hidden" id="originalStatusId" value="">
+            
+            <div class="form-group">
+                <label for="status_id">ID:</label>
+                <input type="number" id="status_id" name="status_id" required>
+                <small>Unique identifier for the status</small>
+            </div>
+            
+            <div class="form-group">
+                <label for="status_name">Name:</label>
+                <input type="text" id="status_name" name="status_name" required>
+                <small>Display name for the status</small>
+            </div>
+            
+            <div class="form-actions">
+                <button type="submit" class="btn-save">Save Status</button>
+                <button type="button" onclick="cancelStatusEdit()" class="btn-refresh">Cancel</button>
+            </div>
+        </form>
+        
+        <div id="statusMessage" class="message" style="display: none;"></div>
+    </div>
+        </div>
+        
+        <div id="ml-models" class="settings-section">
+            <h2>ML Model and Classifier Manager</h2>
+
+            <button id="addModelBtn" class="btn-toggle" type="button">▼ Add a new model or classifier</button><br/><br/>
+
+            <div class="settings-form-container" id="uploadForm" style="display:none;">
+                <h3>Upload New Model or Classifier</h3>
+                <form action="{{ url_for('ml.upload_model') }}" method="post" enctype="multipart/form-data">
+                    <div class="form-group">
+                        <label for="model_file">Select Model File:</label>
+                        <input type="file" id="model_file" name="model_file" required>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="name">Model Name:</label>
+                        <input type="text" id="name" name="name" placeholder="e.g., yolov5" required>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="version">Version:</label>
+                        <input type="text" id="version" name="version" placeholder="e.g., 1.0.0" required>
+                    </div>
+
+                    <div style="display: flex; gap: 20px;">
+                        <div class="form-group" style="flex: 1;">
+                            <label for="model_type">Model Type:</label>
+                            <select id="model_type" name="model_type" required>
+                                <option value="">Select type</option>
+                                <option value="yolo">YOLO</option>
+                                <option value="other">Other</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group" style="flex: 1;">
+                            <label for="category">Category:</label>
+                            <select id="category" name="category" required>
+                                <option value="model">Model</option>
+                                <option value="classifier">Classifier</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="form-actions">
+                        <button type="submit" class="btn-save">Save</button>
+                        <button type="button" class="btn-cancel" onclick="cancelUploadForm()">Cancel</button>
+                    </div>
+                </form>
+            </div>
+
+            <h3>Available Models</h3>
+            <table class="settings-table">
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Name</th>
+                        <th>Version</th>
+                        <th>Type</th>
+                        <th>Created At</th>
+                        <th>Updated At</th>
+                        <th>Default</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for model in models %}
+                    <tr>
+                        <td>{{ model[0] }}</td>
+                        <td>{{ model[1] }}</td>
+                        <td>{{ model[2] }}</td>
+                        <td>{{ model[3] }}</td>
+                        <td>{{ model[4] }}</td>
+                        <td>{{ model[5] }}</td>
+                        <td>
+                            <input type="checkbox" class="default-model-checkbox" 
+                                   data-model-id="{{ model[1] }}:{{ model[2] }}" 
+                                   onchange="setDefaultModel(this)">
+                        </td>
+                        <td>
+                            <form action="{{ url_for('ml.delete_model', model_id=model[0]) }}" method="post" style="display:inline;">
+                                <button type="submit" class="btn-action btn-delete" onclick="return confirm('Are you sure you want to delete this model?');">Delete</button>
+                            </form>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+
+            {% if not models %}
+            <p>No models uploaded yet.</p>
+            {% endif %}
+
+            <h3>Available Classifiers</h3>
+            <table class="settings-table">
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Name</th>
+                        <th>Version</th>
+                        <th>Type</th>
+                        <th>Created At</th>
+                        <th>Updated At</th>
+                        <th>Default</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for classifier in classifiers %}
+                    <tr>
+                        <td>{{ classifier[0] }}</td>
+                        <td>{{ classifier[1] }}</td>
+                        <td>{{ classifier[2] }}</td>
+                        <td>{{ classifier[3] }}</td>
+                        <td>{{ classifier[4] }}</td>
+                        <td>{{ classifier[5] }}</td>
+                        <td>
+                            <input type="checkbox" class="default-classifier-checkbox" 
+                                   data-classifier-id="{{ classifier[1] }}:{{ classifier[2] }}" 
+                                   onchange="setDefaultClassifier(this)">
+                        </td>
+                        <td>
+                            <form action="{{ url_for('ml.delete_model', model_id=classifier[0]) }}" method="post" style="display:inline;">
+                                <button type="submit" class="btn-action btn-delete" onclick="return confirm('Are you sure you want to delete this classifier?');">Delete</button>
+                            </form>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+
+            {% if not classifiers %}
+            <p>No classifiers uploaded yet.</p>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block additional_scripts %}
+<script>
+    // Section Navigation
+    function showSection(sectionId, button) {
+        // Hide all sections
+        const sections = document.querySelectorAll('.settings-section');
+        sections.forEach(section => section.classList.remove('active'));
+        
+        // Remove active class from all nav buttons
+        const navButtons = document.querySelectorAll('.settings-nav-item');
+        navButtons.forEach(btn => btn.classList.remove('active'));
+        
+        // Show selected section
+        const targetSection = document.getElementById(sectionId);
+        if (targetSection) {
+            targetSection.classList.add('active');
+        }
+        
+        // Add active class to clicked button
+        if (button) {
+            button.classList.add('active');
+        }
+    }
+    
+    let isEditingStatus = false;
+    
+    function toggleStatusForm() {
+        const formContainer = document.getElementById('statusFormContainer');
+        const toggleButton = document.getElementById('toggleStatusButton');
+        
+        if (formContainer.style.display === 'none') {
+            formContainer.style.display = 'block';
+            toggleButton.textContent = '▲ Hide Form';
+        } else {
+            formContainer.style.display = 'none';
+            toggleButton.textContent = '▼ Add New Status';
+            cancelStatusEdit();
+        }
+    }
+    
+    function cancelStatusEdit() {
+        isEditingStatus = false;
+        document.getElementById('statusFormTitle').textContent = 'Add New Status';
+        document.getElementById('statusForm').reset();
+        document.getElementById('originalStatusId').value = '';
+        document.getElementById('status_id').disabled = false;
+        const messageDiv = document.getElementById('statusMessage');
+        messageDiv.style.display = 'none';
+    }
+    
+    async function loadModelStatuses() {
+        try {
+            const response = await fetch('/model-statuses');
+            if (response.ok) {
+                const statuses = await response.json();
+                const tbody = document.getElementById('statusTableBody');
+                
+                if (statuses.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="3">No statuses found</td></tr>';
+                } else {
+                    tbody.innerHTML = statuses.map(status => `
+                        <tr>
+                            <td>${status.id}</td>
+                            <td>${status.name}</td>
+                            <td>
+                                <button class="btn-action btn-edit" onclick="editStatus(${status.id}, '${status.name.replace(/'/g, "\\'")}')">Edit</button>
+                                <button class="btn-action btn-delete" onclick="deleteStatus(${status.id})">Delete</button>
+                            </td>
+                        </tr>
+                    `).join('');
+                }
+            }
+        } catch (error) {
+            console.error('Error loading model statuses:', error);
+        }
+    }
+    
+    function editStatus(id, name) {
+        isEditingStatus = true;
+        document.getElementById('statusFormTitle').textContent = 'Edit Status';
+        document.getElementById('originalStatusId').value = id;
+        document.getElementById('status_id').value = id;
+        document.getElementById('status_name').value = name;
+        
+        // Show the form if it's hidden
+        const formContainer = document.getElementById('statusFormContainer');
+        if (formContainer.style.display === 'none') {
+            toggleStatusForm();
+        }
+        
+        // Scroll to form
+        formContainer.scrollIntoView({ behavior: 'smooth' });
+    }
+    
+    async function saveStatus(event) {
+        event.preventDefault();
+        
+        const statusId = parseInt(document.getElementById('status_id').value);
+        const statusName = document.getElementById('status_name').value.trim();
+        const originalId = document.getElementById('originalStatusId').value;
+        
+        const statusData = {
+            id: statusId,
+            name: statusName
+        };
+        
+        try {
+            let response;
+            if (isEditingStatus && originalId) {
+                // Update existing status
+                response = await fetch(`/model-status/${originalId}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(statusData)
+                });
+            } else {
+                // Create new status
+                response = await fetch('/model-status', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(statusData)
+                });
+            }
+            
+            const result = await response.json();
+            const messageDiv = document.getElementById('statusMessage');
+            messageDiv.style.display = 'block';
+            
+            if (response.ok) {
+                messageDiv.textContent = result.message || 'Status saved successfully!';
+                messageDiv.className = 'message success';
+                
+                setTimeout(() => {
+                    loadModelStatuses();
+                    cancelStatusEdit();
+                    messageDiv.style.display = 'none';
+                }, 1500);
+            } else {
+                messageDiv.textContent = 'Error: ' + (result.error || 'Failed to save status');
+                messageDiv.className = 'message error';
+            }
+        } catch (error) {
+            const messageDiv = document.getElementById('statusMessage');
+            messageDiv.style.display = 'block';
+            messageDiv.textContent = 'Error saving status: ' + error.message;
+            messageDiv.className = 'message error';
+        }
+    }
+    
+    async function deleteStatus(id) {
+        if (!confirm(`Are you sure you want to delete status with ID ${id}?`)) {
+            return;
+        }
+        
+        try {
+            const response = await fetch(`/model-status/${id}`, {
+                method: 'DELETE'
+            });
+            
+            if (response.ok) {
+                loadModelStatuses();
+            } else {
+                const result = await response.json();
+                alert('Error: ' + (result.error || 'Failed to delete status'));
+            }
+        } catch (error) {
+            alert('Error deleting status: ' + error.message);
+        }
+    }
+
+    function enableEditMode() {
+        // Hide all display values and show all edit inputs
+        document.querySelectorAll('.display-value').forEach(el => el.style.display = 'none');
+        document.querySelectorAll('.edit-input').forEach(el => el.style.display = 'block');
+        
+        // Copy current values to edit inputs
+        document.getElementById('edit_vm_number').value = document.getElementById('display_vm_number').textContent;
+        document.getElementById('edit_title').value = document.getElementById('display_title').textContent;
+        document.getElementById('edit_description').value = document.getElementById('display_description').textContent;
+        document.getElementById('edit_iris_main_folder').value = document.getElementById('display_iris_main_folder').textContent;
+        document.getElementById('edit_iris_classifier_subfolder').value = document.getElementById('display_iris_classifier_subfolder').textContent;
+        document.getElementById('edit_iris_model_subfolder').value = document.getElementById('display_iris_model_subfolder').textContent;
+        document.getElementById('edit_csv_interval_seconds').value = document.getElementById('display_csv_interval_seconds').textContent;
+        document.getElementById('edit_image_processing_interval').value = document.getElementById('display_image_processing_interval').textContent;
+        
+        // Toggle buttons
+        document.getElementById('editModeButton').style.display = 'none';
+        document.getElementById('editActions').style.display = 'block';
+    }
+
+    function cancelEditMode() {
+        // Show all display values and hide all edit inputs
+        document.querySelectorAll('.display-value').forEach(el => el.style.display = 'block');
+        document.querySelectorAll('.edit-input').forEach(el => el.style.display = 'none');
+        
+        // Toggle buttons
+        document.getElementById('editModeButton').style.display = 'block';
+        document.getElementById('editActions').style.display = 'none';
+        
+        // Hide any messages
+        const messageDiv = document.getElementById('settingsMessage');
+        messageDiv.style.display = 'none';
+    }
+
+    async function loadProjectSettings() {
+        try {
+            const response = await fetch('/project-settings');
+            if (response.ok) {
+                const settings = await response.json();
+                
+                // Populate display values
+                document.getElementById('display_vm_number').textContent = settings.vm_number || '-';
+                document.getElementById('display_title').textContent = settings.title || '-';
+                document.getElementById('display_description').textContent = settings.description || '-';
+                document.getElementById('display_iris_main_folder').textContent = settings.iris_main_folder || '-';
+                document.getElementById('display_iris_classifier_subfolder').textContent = settings.iris_classifier_subfolder || '-';
+                document.getElementById('display_iris_model_subfolder').textContent = settings.iris_model_subfolder || '-';
+                document.getElementById('display_csv_interval_seconds').textContent = settings.csv_interval_seconds || '60';
+                document.getElementById('display_image_processing_interval').textContent = settings.image_processing_interval || '1.0';
+                
+                if (settings.updated_at) {
+                    const date = new Date(settings.updated_at);
+                    document.getElementById('display_updated_at').textContent = date.toLocaleString();
+                } else {
+                    document.getElementById('display_updated_at').textContent = '-';
+                }
+            }
+        } catch (error) {
+            console.error('Error loading project settings:', error);
+        }
+    }
+
+    async function saveProjectSettings() {
+        const formData = {
+            vm_number: document.getElementById('edit_vm_number').value,
+            title: document.getElementById('edit_title').value,
+            description: document.getElementById('edit_description').value,
+            iris_main_folder: document.getElementById('edit_iris_main_folder').value,
+            iris_classifier_subfolder: document.getElementById('edit_iris_classifier_subfolder').value,
+            iris_model_subfolder: document.getElementById('edit_iris_model_subfolder').value,
+            csv_interval_seconds: parseInt(document.getElementById('edit_csv_interval_seconds').value) || 60,
+            image_processing_interval: parseFloat(document.getElementById('edit_image_processing_interval').value) || 1.0
+        };
+
+        try {
+            const response = await fetch('/project-settings', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(formData)
+            });
+
+            const result = await response.json();
+            const messageDiv = document.getElementById('settingsMessage');
+            messageDiv.style.display = 'block';
+            
+            if (response.ok) {
+                messageDiv.textContent = 'Settings saved successfully!';
+                messageDiv.className = 'message success';
+                
+                // Reload the current settings display
+                await loadProjectSettings();
+                cancelEditMode();
+                
+                setTimeout(() => {
+                    messageDiv.style.display = 'none';
+                }, 2000);
+            } else {
+                messageDiv.textContent = 'Error: ' + (result.error || 'Failed to save settings');
+                messageDiv.className = 'message error';
+            }
+        } catch (error) {
+            const messageDiv = document.getElementById('settingsMessage');
+            messageDiv.style.display = 'block';
+            messageDiv.textContent = 'Error saving settings: ' + error.message;
+            messageDiv.className = 'message error';
+        }
+    }
+    
+    // Load settings on page load
+    window.onload = function() {
+        loadProjectSettings();
+        loadModelStatuses();
+        loadSftpServers();
+    };
+    
+    // SFTP Server Management Functions
+    let isEditingSftp = false;
+    
+    function toggleSftpForm() {
+        const formContainer = document.getElementById('sftpFormContainer');
+        const toggleButton = document.getElementById('toggleSftpButton');
+        
+        if (formContainer.style.display === 'none') {
+            formContainer.style.display = 'block';
+            toggleButton.textContent = '▲ Hide Form';
+        } else {
+            formContainer.style.display = 'none';
+            toggleButton.textContent = '▼ Add New SFTP Server';
+            cancelSftpEdit();
+        }
+    }
+    
+    function cancelSftpEdit() {
+        isEditingSftp = false;
+        document.getElementById('sftpFormTitle').textContent = 'Add New SFTP Server';
+        document.getElementById('sftpForm').reset();
+        document.getElementById('sftpServerId').value = '';
+        const messageDiv = document.getElementById('sftpMessage');
+        messageDiv.style.display = 'none';
+    }
+    
+    async function loadSftpServers() {
+        try {
+            const response = await fetch('/sftp-servers');
+            if (response.ok) {
+                const servers = await response.json();
+                const tbody = document.getElementById('sftpTableBody');
+                
+                if (servers.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="5">No SFTP servers found</td></tr>';
+                } else {
+                    tbody.innerHTML = servers.map(server => `
+                        <tr>
+                            <td>${server.id}</td>
+                            <td>${server.server_name}</td>
+                            <td>${server.username}</td>
+                            <td>${'*'.repeat(server.password.length)}</td>
+                            <td>
+                                <button class="btn-action btn-edit" onclick="editSftpServer(${server.id}, '${server.server_name.replace(/'/g, "\\'")}', '${server.username.replace(/'/g, "\\'")}', '${server.password.replace(/'/g, "\\'")}')">Edit</button>
+                                <button class="btn-action btn-delete" onclick="deleteSftpServer(${server.id})">Delete</button>
+                            </td>
+                        </tr>
+                    `).join('');
+                }
+            }
+        } catch (error) {
+            console.error('Error loading SFTP servers:', error);
+        }
+    }
+    
+    function editSftpServer(id, serverName, username, password) {
+        isEditingSftp = true;
+        document.getElementById('sftpFormTitle').textContent = 'Edit SFTP Server';
+        document.getElementById('sftpServerId').value = id;
+        document.getElementById('sftp_server_name').value = serverName;
+        document.getElementById('sftp_username').value = username;
+        document.getElementById('sftp_password').value = password;
+        
+        // Show the form if it's hidden
+        const formContainer = document.getElementById('sftpFormContainer');
+        if (formContainer.style.display === 'none') {
+            toggleSftpForm();
+        }
+        
+        // Scroll to form
+        formContainer.scrollIntoView({ behavior: 'smooth' });
+    }
+    
+    async function saveSftpServer(event) {
+        event.preventDefault();
+        
+        const serverId = document.getElementById('sftpServerId').value;
+        const serverName = document.getElementById('sftp_server_name').value.trim();
+        const username = document.getElementById('sftp_username').value.trim();
+        const password = document.getElementById('sftp_password').value.trim();
+        
+        const serverData = {
+            server_name: serverName,
+            username: username,
+            password: password
+        };
+        
+        try {
+            let response;
+            if (isEditingSftp && serverId) {
+                // Update existing server
+                response = await fetch(`/sftp-server/${serverId}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(serverData)
+                });
+            } else {
+                // Create new server
+                response = await fetch('/sftp-server', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(serverData)
+                });
+            }
+            
+            const result = await response.json();
+            const messageDiv = document.getElementById('sftpMessage');
+            messageDiv.style.display = 'block';
+            
+            if (response.ok) {
+                messageDiv.textContent = result.message || 'SFTP server saved successfully!';
+                messageDiv.className = 'message success';
+                
+                setTimeout(() => {
+                    loadSftpServers();
+                    cancelSftpEdit();
+                    messageDiv.style.display = 'none';
+                }, 1500);
+            } else {
+                messageDiv.textContent = 'Error: ' + (result.error || 'Failed to save SFTP server');
+                messageDiv.className = 'message error';
+            }
+        } catch (error) {
+            const messageDiv = document.getElementById('sftpMessage');
+            messageDiv.style.display = 'block';
+            messageDiv.textContent = 'Error saving SFTP server: ' + error.message;
+            messageDiv.className = 'message error';
+        }
+    }
+    
+    async function deleteSftpServer(id) {
+        if (!confirm(`Are you sure you want to delete SFTP server with ID ${id}?`)) {
+            return;
+        }
+        
+        try {
+            const response = await fetch(`/sftp-server/${id}`, {
+                method: 'DELETE'
+            });
+            
+            if (response.ok) {
+                loadSftpServers();
+            } else {
+                const result = await response.json();
+                alert('Error: ' + (result.error || 'Failed to delete SFTP server'));
+            }
+        } catch (error) {
+            alert('Error deleting SFTP server: ' + error.message);
+        }
+    }
+    
+    // ML Model Management Functions
+    document.getElementById('addModelBtn').addEventListener('click', function() {
+        const form = document.getElementById('uploadForm');
+        const button = document.getElementById('addModelBtn');
+        if (form.style.display === 'none') {
+            form.style.display = 'block';
+            button.textContent = '▲ Hide Form';
+        } else {
+            form.style.display = 'none';
+            button.textContent = '▼ Add a new model or classifier';
+        }
+    });
+    
+    function cancelUploadForm() {
+        const form = document.getElementById('uploadForm');
+        const button = document.getElementById('addModelBtn');
+        form.style.display = 'none';
+        button.textContent = '▼ Add a new model or classifier';
+        // Reset the form
+        document.querySelector('#uploadForm form').reset();
+    }
+
+    // Handle default model selection
+    function setDefaultModel(checkbox) {
+        if (checkbox.checked) {
+            // Uncheck all other model checkboxes
+            document.querySelectorAll('.default-model-checkbox').forEach(cb => {
+                if (cb !== checkbox) cb.checked = false;
+            });
+            // Store in localStorage
+            localStorage.setItem('defaultModel', checkbox.dataset.modelId);
+        } else {
+            localStorage.removeItem('defaultModel');
+        }
+    }
+
+    // Handle default classifier selection
+    function setDefaultClassifier(checkbox) {
+        if (checkbox.checked) {
+            // Uncheck all other classifier checkboxes
+            document.querySelectorAll('.default-classifier-checkbox').forEach(cb => {
+                if (cb !== checkbox) cb.checked = false;
+            });
+            // Store in localStorage
+            localStorage.setItem('defaultClassifier', checkbox.dataset.classifierId);
+        } else {
+            localStorage.removeItem('defaultClassifier');
+        }
+    }
+
+    // Load saved defaults on page load
+    window.addEventListener('DOMContentLoaded', function() {
+        const defaultModel = localStorage.getItem('defaultModel');
+        const defaultClassifier = localStorage.getItem('defaultClassifier');
+
+        if (defaultModel) {
+            document.querySelectorAll('.default-model-checkbox').forEach(cb => {
+                if (cb.dataset.modelId === defaultModel) {
+                    cb.checked = true;
+                }
+            });
+        }
+
+        if (defaultClassifier) {
+            document.querySelectorAll('.default-classifier-checkbox').forEach(cb => {
+                if (cb.dataset.classifierId === defaultClassifier) {
+                    cb.checked = true;
+                }
+            });
+        }
+    });
+</script>
+{% endblock %}
