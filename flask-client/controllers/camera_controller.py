@@ -98,14 +98,9 @@ def process_video_stream_background(thread_id, url, model_id=None, classifier_id
             active_threads[thread_id]['status'] = 'running'
             active_threads[thread_id]['frame_count'] = 0
     
-    # Create a session that can be closed from outside
-    session = requests.Session()
+    # Don't use a persistent session to avoid socket issues on Windows
+    # Create new connection for each request cycle
     current_request = None
-    
-    # Store session in thread info so we can close it externally
-    with thread_lock:
-        if thread_id in active_threads:
-            active_threads[thread_id]['session'] = session
     
     print(f"[Thread {thread_id}] Starting stream processing")
     print(f"[Thread {thread_id}] URL: {url}")
@@ -121,7 +116,8 @@ def process_video_stream_background(thread_id, url, model_id=None, classifier_id
             try:
                 # Use timeout only for connection, not for reading stream (None for read timeout)
                 print(f"[Thread {thread_id}] Connecting to video stream...")
-                current_request = session.get(url, stream=True, timeout=(5, None))
+                # Don't reuse connections - create fresh request each time
+                current_request = requests.get(url, stream=True, timeout=(5, None))
                 r = current_request
                 print(f"[Thread {thread_id}] Connected successfully, starting frame processing")
                 boundary = b'--frame'
@@ -374,22 +370,18 @@ def process_video_stream_background(thread_id, url, model_id=None, classifier_id
         # Close any open request
         if current_request:
             try:
+                print(f"[Cleanup] Closing HTTP connection for thread {thread_id}")
                 current_request.close()
-            except:
-                pass
-        
-        # Close the session
-        try:
-            session.close()
-        except:
-            pass
+                # Force close the underlying connection
+                if hasattr(current_request, 'raw'):
+                    current_request.raw.close()
+            except Exception as e:
+                print(f"[Cleanup] Error closing request: {e}")
             
         with thread_lock:
             if thread_id in active_threads:
                 active_threads[thread_id]['status'] = 'stopped'
                 active_threads[thread_id]['running'] = False
-                # Remove session reference
-                active_threads[thread_id].pop('session', None)
 
 def process_video_stream(url, model_id=None, classifier_id=None, settings_id=None):
     """
@@ -754,7 +746,6 @@ def stop_thread():
     thread_id = data.get('thread_id')
     
     thread_obj = None
-    session_obj = None
     
     with thread_lock:
         if thread_id not in active_threads:
@@ -763,21 +754,16 @@ def stop_thread():
         active_threads[thread_id]['running'] = False
         active_threads[thread_id]['status'] = 'stopping'
         thread_obj = active_threads[thread_id].get('thread')
-        session_obj = active_threads[thread_id].get('session')
     
-    # Force close the session to interrupt any blocking reads
-    if session_obj:
-        try:
-            session_obj.close()
-            print(f"Closed session for thread {thread_id}")
-        except Exception as e:
-            print(f"Error closing session: {e}")
+    print(f"[Stop Thread] Stopping thread {thread_id}...")
     
     # Wait for thread to actually stop (max 5 seconds)
     if thread_obj and thread_obj.is_alive():
         thread_obj.join(timeout=5)
         if thread_obj.is_alive():
-            print(f"Warning: Thread {thread_id} did not stop gracefully")
+            print(f"[Stop Thread] Warning: Thread {thread_id} did not stop gracefully")
+        else:
+            print(f"[Stop Thread] Thread {thread_id} stopped successfully")
     
     # Clean up thread from active_threads after stopping
     with thread_lock:
