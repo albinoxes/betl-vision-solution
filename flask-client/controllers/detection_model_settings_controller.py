@@ -33,7 +33,7 @@ def add_camera_settings():
         est_particle_volume_x, 
         est_particle_volume_exp
     )
-    return redirect(url_for('project.project_settings'))
+    return redirect(url_for('project.project_settings') + '#ml-models')
 
 @detection_model_settings_bp.route('/update-camera-settings/<setting_name>', methods=['POST'])
 def update_camera_settings(setting_name):
@@ -59,10 +59,10 @@ def update_camera_settings(setting_name):
 
     detection_model_settings_provider.update_settings(setting_name, **updates)
     # Add timestamp to force cache refresh
-    return redirect(url_for('project.project_settings') + f'?t={int(time.time())}')
+    return redirect(url_for('project.project_settings') + f'?t={int(time.time())}#ml-models')
 
 @detection_model_settings_bp.route('/delete-camera-settings/<setting_name>', methods=['POST'])
 def delete_camera_settings(setting_name):
     from sqlite.detection_model_settings_sqlite_provider import detection_model_settings_provider
     detection_model_settings_provider.delete_settings(setting_name)
-    return redirect(url_for('project.project_settings'))
+    return redirect(url_for('project.project_settings') + '#ml-models')
