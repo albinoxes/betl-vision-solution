@@ -118,14 +118,7 @@
     async function refreshThreads() {
         try {
             const response = await fetch('/active-threads');
-            conServerStatus();
-        refreshThreads();
-        
-        // Auto-refresh server status every 10 seconds
-        setInterval(refreshServerStatus, 10000);
-        
-        // Auto-refresh threads every 5 seconds
-        setInterval(refreshThreads, 5000ds = await response.json();
+            const threads = await response.json();
             const tableBody = document.getElementById('threadsTableBody');
             tableBody.innerHTML = '';
             
@@ -157,7 +150,14 @@
     // Initial load
     window.onload = function() {
         loadProjectInfo();
+        refreshServerStatus();
         refreshThreads();
+        
+        // Auto-refresh server status every 10 seconds
+        setInterval(refreshServerStatus, 10000);
+        
+        // Auto-refresh threads every 5 seconds
+        setInterval(refreshThreads, 5000);
     };
 </script>
 {% endblock %}
