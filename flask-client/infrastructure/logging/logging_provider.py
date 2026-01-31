@@ -1,6 +1,7 @@
 import threading
 import queue
 import os
+import inspect
 from datetime import datetime
 from pathlib import Path
 
@@ -58,13 +59,16 @@ class LoggingProvider:
         while self._running:
             try:
                 # Wait for log message with timeout to allow checking _running flag
-                message = self._queue.get(timeout=1)
-                if message is None:  # Sentinel value to stop
+                log_data = self._queue.get(timeout=1)
+                if log_data is None:  # Sentinel value to stop
                     break
                 
-                # Write to file with timestamp
+                # Unpack log data: (message, thread_name, module_name, function_name)
+                message, thread_name, module_name, function_name = log_data
+                
+                # Write to file with timestamp and context
                 timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
-                log_entry = f"[{timestamp}] {message}\n"
+                log_entry = f"[{timestamp}] [{thread_name}] [{module_name}.{function_name}] {message}\n"
                 self._file_handle.write(log_entry)
                 self._file_handle.flush()
                 
@@ -74,6 +78,36 @@ class LoggingProvider:
             except Exception as e:
                 # Fallback to console if logging fails
                 print(f"Logging error: {e}")
+    
+    def _get_caller_info(self):
+        """
+        Get information about the calling function (module, function name).
+        Skips internal logging methods to get the actual caller.
+        """
+        # Get the call stack
+        stack = inspect.stack()
+        
+        # Find the first frame outside of logging_provider module
+        # Skip frames until we find one that's not in this file
+        caller_frame = None
+        for frame_info in stack[1:]:  # Skip current function
+            frame_module = Path(frame_info.filename).stem
+            if frame_module != 'logging_provider':
+                caller_frame = frame_info
+                break
+        
+        # If we didn't find an external caller, use the last frame
+        if caller_frame is None:
+            caller_frame = stack[-1]
+        
+        # Get module name (controller, processor, etc.)
+        module_path = caller_frame.filename
+        module_name = Path(module_path).stem  # Get filename without extension
+        
+        # Get function name
+        function_name = caller_frame.function
+        
+        return module_name, function_name
     
     def log(self, message):
         """
@@ -87,7 +121,12 @@ class LoggingProvider:
             print(message)
             return
         
-        self._queue.put(str(message))
+        # Get thread name and caller information
+        thread_name = threading.current_thread().name
+        module_name, function_name = self._get_caller_info()
+        
+        # Put log data as tuple: (message, thread_name, module_name, function_name)
+        self._queue.put((str(message), thread_name, module_name, function_name))
     
     def info(self, message):
         """Log an info message."""
