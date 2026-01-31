@@ -529,54 +529,51 @@ def simulator_video():
 def connected_devices():
     devices = []
     
-    # Query legacy-camera-server
-    try:
-        legacy_response = requests.get('http://localhost:5002/devices', timeout=3)
-        if legacy_response.status_code == 200:
-            legacy_devices = legacy_response.json()
-            for dev in legacy_devices:
-                devices.append({
-                    'type': 'legacy',
-                    'id': dev['id'],
-                    'info': dev['info'],
-                    'ip': dev['info'].split(';')[0] if ';' in dev['info'] else 'unknown',
-                    'status': dev['status']
-                })
-    except Exception as e:
-        pass  # Server not running or error
-
-    # Query webcam-server
-    try:
-        webcam_response = requests.get('http://localhost:5001/devices', timeout=3)
-        if webcam_response.status_code == 200:
-            webcam_devices = webcam_response.json()
-            for dev in webcam_devices:
-                devices.append({
-                    'type': 'webcam',
-                    'id': dev['id'],
-                    'info': dev['info'],
-                    'ip': 'localhost',
-                    'status': dev['status']
-                })
-    except Exception as e:
-        pass  # Server not running or error
-
-    # Query simulator-server
-    try:
-        simulator_response = requests.get('http://localhost:5003/devices', timeout=3)
-        if simulator_response.status_code == 200:
-            simulator_devices = simulator_response.json()
-            for dev in simulator_devices:
-                devices.append({
-                    'type': 'simulator',
-                    'id': dev['id'],
-                    'info': dev['info'],
-                    'ip': 'localhost',
-                    'status': dev['status']
-                })
-    except Exception as e:
-        pass  # Server not running or error
-
+    # Use ThreadPoolExecutor to query all servers in parallel
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    
+    def query_legacy():
+        try:
+            response = requests.get('http://localhost:5002/devices', timeout=2)
+            if response.status_code == 200:
+                return [{'type': 'legacy', 'id': dev['id'], 'info': dev['info'], 
+                        'ip': dev['info'].split(';')[0] if ';' in dev['info'] else 'unknown',
+                        'status': dev['status']} for dev in response.json()]
+        except:
+            pass
+        return []
+    
+    def query_webcam():
+        try:
+            response = requests.get('http://localhost:5001/devices', timeout=2)
+            if response.status_code == 200:
+                return [{'type': 'webcam', 'id': dev['id'], 'info': dev['info'],
+                        'ip': 'localhost', 'status': dev['status']} for dev in response.json()]
+        except:
+            pass
+        return []
+    
+    def query_simulator():
+        try:
+            response = requests.get('http://localhost:5003/devices', timeout=2)
+            if response.status_code == 200:
+                return [{'type': 'simulator', 'id': dev['id'], 'info': dev['info'],
+                        'ip': 'localhost', 'status': dev['status']} for dev in response.json()]
+        except:
+            pass
+        return []
+    
+    # Execute all queries in parallel
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        futures = [
+            executor.submit(query_legacy),
+            executor.submit(query_webcam),
+            executor.submit(query_simulator)
+        ]
+        
+        for future in as_completed(futures):
+            devices.extend(future.result())
+    
     return jsonify(devices)
 
 @camera_bp.route('/camera-manager')

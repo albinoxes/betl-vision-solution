@@ -22,7 +22,7 @@
             <tbody id="deviceTableBody">
             </tbody>
         </table>
-        <button onclick="loadDevices()">Refresh</button>
+        <button id="refreshBtn">Refresh</button>
 
         <div id="videoContainer" style="display:none; margin-top:20px;">
             <h2>Video Feed</h2>
@@ -32,83 +32,112 @@
 
 {% block additional_scripts %}
 <script>
+    // Initialize global variables
     window.models = {{ models|tojson }};
     window.classifiers = {{ classifiers|tojson }};
-</script>
-<script>
+    
+    // Load devices function
     async function loadDevices() {
+        console.log('=== REFRESH CLICKED ==='); // Debug log
+        const tableBody = document.getElementById('deviceTableBody');
+        
         try {
-            const response = await fetch('/connected-devices');
+            // Fetch devices with timeout
+            console.log('Fetching connected devices...');
+            const controller1 = new AbortController();
+            const timeout1 = setTimeout(() => controller1.abort(), 15000); // 15 second timeout
+            
+            const response = await fetch('/connected-devices', { signal: controller1.signal });
+            clearTimeout(timeout1);
+            
             if (!response.ok) {
                 console.error('Failed to fetch devices:', response.status);
+                tableBody.innerHTML = '<tr><td colspan="9">Error loading devices</td></tr>';
                 return;
             }
             const devices = await response.json();
+            console.log('✓ Devices loaded:', devices.length);
             
-            // Get active threads
-            const threadsResponse = await fetch('/active-threads');
+            // Get active threads with timeout
+            console.log('Fetching active threads...');
+            const controller2 = new AbortController();
+            const timeout2 = setTimeout(() => controller2.abort(), 15000);
+            
+            const threadsResponse = await fetch('/active-threads', { signal: controller2.signal });
+            clearTimeout(timeout2);
+            
             if (!threadsResponse.ok) {
                 console.error('Failed to fetch active threads:', threadsResponse.status);
-                return;
+                // Continue anyway with no thread info
             }
             const activeThreads = await threadsResponse.json();
-        
-        // Create a map of active thread IDs
-        const activeThreadsMap = new Map();
-        activeThreads.forEach(thread => {
-            activeThreadsMap.set(thread.thread_id, thread);
-        });
-        
-        const tableBody = document.getElementById('deviceTableBody');
-        tableBody.innerHTML = '';
-        
-        // Get defaults from localStorage
-        const defaultModel = localStorage.getItem('defaultModel') || '';
-        const defaultClassifier = localStorage.getItem('defaultClassifier') || '';
-        
-        devices.forEach(device => {
-            const row = document.createElement('tr');
+            console.log('✓ Active threads loaded:', activeThreads.length);
             
-            // Build model select
-            let modelOptions = '<option value="">Select Model</option>';
-            window.models.forEach(model => {
-                const modelId = `${model[1]}:${model[2]}`;
-                const selected = modelId === defaultModel ? 'selected' : '';
-                modelOptions += `<option value="${modelId}" ${selected}>${model[1]} (${model[2]})</option>`;
+            // Create a map of active thread IDs
+            const activeThreadsMap = new Map();
+            activeThreads.forEach(thread => {
+                activeThreadsMap.set(thread.thread_id, thread);
             });
-            const modelSelect = `<select>${modelOptions}</select>`;
             
-            // Build classifier select
-            let classifierOptions = '<option value="">Select Classifier</option>';
-            window.classifiers.forEach(classifier => {
-                const classifierId = `${classifier[1]}:${classifier[2]}`;
-                const selected = classifierId === defaultClassifier ? 'selected' : '';
-                classifierOptions += `<option value="${classifierId}" ${selected}>${classifier[1]} (${classifier[2]})</option>`;
+            // Clear table
+            tableBody.innerHTML = '';
+            
+            // Get defaults from localStorage
+            const defaultModel = localStorage.getItem('defaultModel') || '';
+            const defaultClassifier = localStorage.getItem('defaultClassifier') || '';
+            
+            // Build table rows
+            devices.forEach(device => {
+                const row = document.createElement('tr');
+                
+                // Build model select
+                let modelOptions = '<option value="">Select Model</option>';
+                window.models.forEach(model => {
+                    const modelId = `${model[1]}:${model[2]}`;
+                    const selected = modelId === defaultModel ? 'selected' : '';
+                    modelOptions += `<option value="${modelId}" ${selected}>${model[1]} (${model[2]})</option>`;
+                });
+                const modelSelect = `<select>${modelOptions}</select>`;
+                
+                // Build classifier select
+                let classifierOptions = '<option value="">Select Classifier</option>';
+                window.classifiers.forEach(classifier => {
+                    const classifierId = `${classifier[1]}:${classifier[2]}`;
+                    const selected = classifierId === defaultClassifier ? 'selected' : '';
+                    classifierOptions += `<option value="${classifierId}" ${selected}>${classifier[1]} (${classifier[2]})</option>`;
+                });
+                const classifierSelect = `<select>${classifierOptions}</select>`;
+                
+                // Check if this device has an active thread
+                const threadId = `${device.type}_${device.id}`;
+                const threadInfo = activeThreadsMap.get(threadId);
+                const isThreadRunning = threadInfo && threadInfo.running;
+                const threadButtonText = isThreadRunning ? 'Stop Thread' : 'Start Thread';
+                const threadButtonColor = isThreadRunning ? 'background-color: #ff4444;' : '';
+                
+                row.innerHTML = `
+                    <td>${device.type}</td>
+                    <td>${device.id}</td>
+                    <td>${device.info}</td>
+                    <td>${device.ip}</td>
+                    <td>${device.status}</td>
+                    <td>${modelSelect}</td>
+                    <td>${classifierSelect}</td>
+                    <td><button class="thread-btn" data-thread-id="${device.type}_${device.id}" onclick="toggleThread('${device.type}', ${device.id}, this)" style="${threadButtonColor}">${threadButtonText}</button></td>
+                    <td><button onclick="viewStream('${device.type}', ${device.id}, this)">View Stream</button></td>
+                `;
+                tableBody.appendChild(row);
             });
-            const classifierSelect = `<select>${classifierOptions}</select>`;
             
-            // Check if this device has an active thread
-            const threadId = `${device.type}_${device.id}`;
-            const threadInfo = activeThreadsMap.get(threadId);
-            const isThreadRunning = threadInfo && threadInfo.running;
-            const threadButtonText = isThreadRunning ? 'Stop Thread' : 'Start Thread';
-            const threadButtonColor = isThreadRunning ? 'background-color: #ff4444;' : '';
-            
-            row.innerHTML = `
-                <td>${device.type}</td>
-                <td>${device.id}</td>
-                <td>${device.info}</td>
-                <td>${device.ip}</td>
-                <td>${device.status}</td>
-                <td>${modelSelect}</td>
-                <td>${classifierSelect}</td>
-                <td><button class="thread-btn" data-thread-id="${device.type}_${device.id}" onclick="toggleThread('${device.type}', ${device.id}, this)" style="${threadButtonColor}">${threadButtonText}</button></td>
-                <td><button onclick="viewStream('${device.type}', ${device.id}, this)">View Stream</button></td>
-            `;
-            tableBody.appendChild(row);
-        });
+            console.log('✓ Table updated successfully');
         } catch (error) {
-            console.error('Error loading devices:', error);
+            if (error.name === 'AbortError') {
+                console.error('Request timeout - servers may be offline');
+                tableBody.innerHTML = '<tr><td colspan="9">Request timeout - check if servers are running</td></tr>';
+            } else {
+                console.error('Error loading devices:', error);
+                tableBody.innerHTML = '<tr><td colspan="9">Error: ' + error.message + '</td></tr>';
+            }
         }
     }
     
@@ -166,7 +195,22 @@
     }
     
     window.onload = function() {
+        console.log('Page loaded, initializing...');
+        
+        // Attach event listener to refresh button
+        const refreshBtn = document.getElementById('refreshBtn');
+        if (refreshBtn) {
+            refreshBtn.addEventListener('click', function() {
+                console.log('Refresh button clicked');
+                loadDevices();
+            });
+        }
+        
+        // Initial load
         loadDevices();
+        
+        // Refresh devices and thread states every 10 seconds
+        setInterval(loadDevices, 10000);
     };
 
     async function toggleThread(type, id, btn) {
@@ -226,34 +270,6 @@
             }
         }
     }
-    
-    // Update thread button states periodically
-    async function updateThreadStates() {
-        try {
-            const response = await fetch('/active-threads');
-            const threads = await response.json();
-            
-            // Create a set of active thread IDs
-            const activeThreadIds = new Set(threads.filter(t => t.running).map(t => t.thread_id));
-            
-            // Update all thread buttons
-            document.querySelectorAll('.thread-btn').forEach(btn => {
-                const threadId = btn.getAttribute('data-thread-id');
-                if (activeThreadIds.has(threadId)) {
-                    btn.textContent = 'Stop Thread';
-                    btn.style.backgroundColor = '#ff4444';
-                } else {
-                    btn.textContent = 'Start Thread';
-                    btn.style.backgroundColor = '';
-                }
-            });
-        } catch (error) {
-            console.error('Error updating thread states:', error);
-        }
-    }
-    
-    // Update thread states every 3 seconds
-    setInterval(updateThreadStates, 3000);
 
 </script>
 {% endblock %}
