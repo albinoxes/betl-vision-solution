@@ -160,13 +160,6 @@ def process_video_stream_background(thread_id, url, model_id=None, classifier_id
                             img2d = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
                             
                             if img2d is not None:
-                                # Increment frame count for each decoded frame
-                                frame_count += 1
-                                
-                                # Log frame reception (only once every 100 frames to avoid spam)
-                                if frame_count % 100 == 0:
-                                    print(f"[Thread {thread_id}] Processed {frame_count} frames")
-                                
                                 # Save frame to storage directory and database at the same interval as processing
                                 current_time = time.time()
                                 if current_time - last_frame_save_time >= processing_interval:
@@ -223,6 +216,8 @@ def process_video_stream_background(thread_id, url, model_id=None, classifier_id
                                     if current_time - last_model_processing_time >= processing_interval:
                                         print(f"[Processing] Model processing frame at {current_time:.2f}, interval: {current_time - last_model_processing_time:.2f}s")
                                         try:
+                                            # Increment frame count for processed frame
+                                            frame_count += 1
                                             # Use processing time for CSV timestamp
                                             processing_timestamp = datetime.now()
                                             result = object_process_image(img2d.copy(), model=model, settings=settings)
@@ -272,10 +267,12 @@ def process_video_stream_background(thread_id, url, model_id=None, classifier_id
                                     if current_time - last_classifier_processing_time >= processing_interval:
                                         print(f"[Processing] Classifier processing frame at {current_time:.2f}, interval: {current_time - last_classifier_processing_time:.2f}s")
                                         try:
+                                            # Increment frame count for processed frame (if not already incremented by model)
+                                            if not model_id:
+                                                frame_count += 1
                                             # Use processing time for CSV timestamp
                                             processing_timestamp = datetime.now()
                                             belt_status = classifier_process_image(img2d.copy(), classifier_id=classifier_id)
-                                            frame_count += 1
                                             # Generate IRIS input CSV for belt status with processing timestamp
                                             csv_path = iris_input_processor.generate_iris_input_data(
                                                 project_settings=project_settings,
