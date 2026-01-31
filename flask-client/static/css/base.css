@@ -30,6 +30,14 @@ body {
     font-size: 24px;
     font-weight: bold;
     padding: 15px 0;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.nav-logo {
+    height: 40px;
+    width: auto;
 }
 
 .nav-links {

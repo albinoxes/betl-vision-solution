@@ -10,3 +10,5 @@ simulator_env
 flask-client/controllers/__pycache__
 flask-client/storage_data/__pycache__/store_data_manager.cpython-312.pyc
 flask-client/iris_communication/__pycache__
+flask-client/infrastructure/logging/__pycache__
+flask-client/infrastructure/__pycache__

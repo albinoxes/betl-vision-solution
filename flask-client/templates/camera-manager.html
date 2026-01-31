@@ -15,7 +15,6 @@
                     <th>Status</th>
                     <th>ML Model</th>
                     <th>Classifier</th>
-                    <th>Settings</th>
                     <th>Thread Control</th>
                     <th>Action</th>
                 </tr>
@@ -23,104 +22,7 @@
             <tbody id="deviceTableBody">
             </tbody>
         </table>
-        <button onclick="loadDevices()">Refresh</button>
-
-        <h2>Camera Settings</h2>
-        <button id="addSettingsBtn">Add New Camera Settings</button><br/><br/>
-
-        <div id="settingsForm" style="display:none;">
-            <h3>Add New Camera Settings</h3>
-            <form action="{{ url_for('camera.add_camera_settings') }}" method="post">
-                <label for="setting_name">Settings Name:</label><br>
-                <input type="text" id="setting_name" name="name" required><br><br>
-
-                <label for="min_conf">Min Confidence:</label><br>
-                <input type="number" step="0.01" id="min_conf" name="min_conf" value="0.8" required><br><br>
-
-                <label for="min_d_detect">Min D Detect:</label><br>
-                <input type="number" id="min_d_detect" name="min_d_detect" value="200" required><br><br>
-
-                <label for="min_d_save">Min D Save:</label><br>
-                <input type="number" id="min_d_save" name="min_d_save" value="200" required><br><br>
-
-                <label for="particle_bb_dimension_factor">Particle BB Dimension Factor:</label><br>
-                <input type="number" step="0.01" id="particle_bb_dimension_factor" name="particle_bb_dimension_factor" value="0.9" required><br><br>
-
-                <label for="est_particle_volume_x">Est Particle Volume X:</label><br>
-                <input type="number" step="0.000000000000000001" id="est_particle_volume_x" name="est_particle_volume_x" value="0.00000000008357470139" required><br><br>
-
-                <label for="est_particle_volume_exp">Est Particle Volume Exp:</label><br>
-                <input type="number" step="0.00000000001" id="est_particle_volume_exp" name="est_particle_volume_exp" value="3.02511466443" required><br><br>
-
-                <button type="submit">Add Settings</button>
-            </form>
-        </div>
-
-        <table border="1">
-            <thead>
-                <tr>
-                    <th>ID</th>
-                    <th>Name</th>
-                    <th>Min Conf</th>
-                    <th>Min D Detect</th>
-                    <th>Min D Save</th>
-                    <th>BB Factor</th>
-                    <th>Vol X</th>
-                    <th>Vol Exp</th>
-                    <th>Actions</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for setting in settings %}
-                <tr>
-                    <td>{{ setting[0] }}</td>
-                    <td>{{ setting[1] }}</td>
-                    <td>{{ setting[2] }}</td>
-                    <td>{{ setting[3] }}</td>
-                    <td>{{ setting[4] }}</td>
-                    <td>{{ setting[5] }}</td>
-                    <td>{{ setting[6] }}</td>
-                    <td>{{ setting[7] }}</td>
-                    <td>
-                        <button onclick="editSettings('{{ setting[1] }}', {{ setting[2] }}, {{ setting[3] }}, {{ setting[4] }}, {{ setting[5] }}, {{ setting[6] }}, {{ setting[7] }})">Update</button>
-                        {% if setting[1] != 'default' %}
-                        <form action="{{ url_for('camera.delete_camera_settings', setting_name=setting[1]) }}" method="post" style="display:inline;">
-                            <button type="submit" onclick="return confirm('Are you sure you want to delete this setting?');">Delete</button>
-                        </form>
-                        {% endif %}
-                    </td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
-
-        <div id="editSettingsForm" style="display:none;">
-            <h3>Edit Camera Settings</h3>
-            <form action="" method="post" id="editForm">
-                <input type="hidden" id="edit_setting_name" name="setting_name">
-
-                <label for="edit_min_conf">Min Confidence:</label><br>
-                <input type="number" step="0.01" id="edit_min_conf" name="min_conf" required><br><br>
-
-                <label for="edit_min_d_detect">Min D Detect:</label><br>
-                <input type="number" id="edit_min_d_detect" name="min_d_detect" required><br><br>
-
-                <label for="edit_min_d_save">Min D Save:</label><br>
-                <input type="number" id="edit_min_d_save" name="min_d_save" required><br><br>
-
-                <label for="edit_particle_bb_dimension_factor">Particle BB Dimension Factor:</label><br>
-                <input type="number" step="0.01" id="edit_particle_bb_dimension_factor" name="particle_bb_dimension_factor" required><br><br>
-
-                <label for="edit_est_particle_volume_x">Est Particle Volume X:</label><br>
-                <input type="number" step="0.000000000000000001" id="edit_est_particle_volume_x" name="est_particle_volume_x" required><br><br>
-
-                <label for="edit_est_particle_volume_exp">Est Particle Volume Exp:</label><br>
-                <input type="number" step="0.00000000001" id="edit_est_particle_volume_exp" name="est_particle_volume_exp" required><br><br>
-
-                <button type="submit">Update Settings</button>
-                <button type="button" onclick="cancelEdit()">Cancel</button>
-            </form>
-        </div>
+        <button id="refreshBtn">Refresh</button>
 
         <div id="videoContainer" style="display:none; margin-top:20px;">
             <h2>Video Feed</h2>
@@ -130,92 +32,112 @@
 
 {% block additional_scripts %}
 <script>
+    // Initialize global variables
     window.models = {{ models|tojson }};
     window.classifiers = {{ classifiers|tojson }};
-    window.settings = {{ settings|tojson }};
-</script>
-<script>
+    
+    // Load devices function
     async function loadDevices() {
+        console.log('=== REFRESH CLICKED ==='); // Debug log
+        const tableBody = document.getElementById('deviceTableBody');
+        
         try {
-            const response = await fetch('/connected-devices');
+            // Fetch devices with timeout
+            console.log('Fetching connected devices...');
+            const controller1 = new AbortController();
+            const timeout1 = setTimeout(() => controller1.abort(), 5000); // 5 second timeout
+            
+            const response = await fetch('/connected-devices', { signal: controller1.signal });
+            clearTimeout(timeout1);
+            
             if (!response.ok) {
                 console.error('Failed to fetch devices:', response.status);
+                tableBody.innerHTML = '<tr><td colspan="9">Error loading devices</td></tr>';
                 return;
             }
             const devices = await response.json();
+            console.log('✓ Devices loaded:', devices.length);
             
-            // Get active threads
-            const threadsResponse = await fetch('/active-threads');
+            // Get active threads with timeout
+            console.log('Fetching active threads...');
+            const controller2 = new AbortController();
+            const timeout2 = setTimeout(() => controller2.abort(), 5000);
+            
+            const threadsResponse = await fetch('/active-threads', { signal: controller2.signal });
+            clearTimeout(timeout2);
+            
             if (!threadsResponse.ok) {
                 console.error('Failed to fetch active threads:', threadsResponse.status);
-                return;
+                // Continue anyway with no thread info
             }
             const activeThreads = await threadsResponse.json();
-        
-        // Create a map of active thread IDs
-        const activeThreadsMap = new Map();
-        activeThreads.forEach(thread => {
-            activeThreadsMap.set(thread.thread_id, thread);
-        });
-        
-        const tableBody = document.getElementById('deviceTableBody');
-        tableBody.innerHTML = '';
-        
-        // Get defaults from localStorage
-        const defaultModel = localStorage.getItem('defaultModel') || '';
-        const defaultClassifier = localStorage.getItem('defaultClassifier') || '';
-        
-        devices.forEach(device => {
-            const row = document.createElement('tr');
+            console.log('✓ Active threads loaded:', activeThreads.length);
             
-            // Build model select
-            let modelOptions = '<option value="">Select Model</option>';
-            window.models.forEach(model => {
-                const modelId = `${model[1]}:${model[2]}`;
-                const selected = modelId === defaultModel ? 'selected' : '';
-                modelOptions += `<option value="${modelId}" ${selected}>${model[1]} (${model[2]})</option>`;
+            // Create a map of active thread IDs
+            const activeThreadsMap = new Map();
+            activeThreads.forEach(thread => {
+                activeThreadsMap.set(thread.thread_id, thread);
             });
-            const modelSelect = `<select>${modelOptions}</select>`;
             
-            // Build classifier select
-            let classifierOptions = '<option value="">Select Classifier</option>';
-            window.classifiers.forEach(classifier => {
-                const classifierId = `${classifier[1]}:${classifier[2]}`;
-                const selected = classifierId === defaultClassifier ? 'selected' : '';
-                classifierOptions += `<option value="${classifierId}" ${selected}>${classifier[1]} (${classifier[2]})</option>`;
+            // Clear table
+            tableBody.innerHTML = '';
+            
+            // Get defaults from localStorage
+            const defaultModel = localStorage.getItem('defaultModel') || '';
+            const defaultClassifier = localStorage.getItem('defaultClassifier') || '';
+            
+            // Build table rows
+            devices.forEach(device => {
+                const row = document.createElement('tr');
+                
+                // Build model select
+                let modelOptions = '<option value="">Select Model</option>';
+                window.models.forEach(model => {
+                    const modelId = `${model[1]}:${model[2]}`;
+                    const selected = modelId === defaultModel ? 'selected' : '';
+                    modelOptions += `<option value="${modelId}" ${selected}>${model[1]} (${model[2]})</option>`;
+                });
+                const modelSelect = `<select>${modelOptions}</select>`;
+                
+                // Build classifier select
+                let classifierOptions = '<option value="">Select Classifier</option>';
+                window.classifiers.forEach(classifier => {
+                    const classifierId = `${classifier[1]}:${classifier[2]}`;
+                    const selected = classifierId === defaultClassifier ? 'selected' : '';
+                    classifierOptions += `<option value="${classifierId}" ${selected}>${classifier[1]} (${classifier[2]})</option>`;
+                });
+                const classifierSelect = `<select>${classifierOptions}</select>`;
+                
+                // Check if this device has an active thread
+                const threadId = `${device.type}_${device.id}`;
+                const threadInfo = activeThreadsMap.get(threadId);
+                const isThreadRunning = threadInfo && threadInfo.running;
+                const threadButtonText = isThreadRunning ? 'Stop Thread' : 'Start Thread';
+                const threadButtonColor = isThreadRunning ? 'background-color: #ff4444;' : '';
+                
+                row.innerHTML = `
+                    <td>${device.type}</td>
+                    <td>${device.id}</td>
+                    <td>${device.info}</td>
+                    <td>${device.ip}</td>
+                    <td>${device.status}</td>
+                    <td>${modelSelect}</td>
+                    <td>${classifierSelect}</td>
+                    <td><button class="thread-btn" data-thread-id="${device.type}_${device.id}" onclick="toggleThread('${device.type}', ${device.id}, this)" style="${threadButtonColor}">${threadButtonText}</button></td>
+                    <td><button onclick="viewStream('${device.type}', ${device.id}, this)">View Stream</button></td>
+                `;
+                tableBody.appendChild(row);
             });
-            const classifierSelect = `<select>${classifierOptions}</select>`;
             
-            // Build settings select
-            let settingsOptions = '<option value="">Default Settings</option>';
-            window.settings.forEach(setting => {
-                settingsOptions += `<option value="${setting[1]}">${setting[1]}</option>`;
-            });
-            const settingsSelect = `<select>${settingsOptions}</select>`;
-            
-            // Check if this device has an active thread
-            const threadId = `${device.type}_${device.id}`;
-            const threadInfo = activeThreadsMap.get(threadId);
-            const isThreadRunning = threadInfo && threadInfo.running;
-            const threadButtonText = isThreadRunning ? 'Stop Thread' : 'Start Thread';
-            const threadButtonColor = isThreadRunning ? 'background-color: #ff4444;' : '';
-            
-            row.innerHTML = `
-                <td>${device.type}</td>
-                <td>${device.id}</td>
-                <td>${device.info}</td>
-                <td>${device.ip}</td>
-                <td>${device.status}</td>
-                <td>${modelSelect}</td>
-                <td>${classifierSelect}</td>
-                <td>${settingsSelect}</td>
-                <td><button class="thread-btn" data-thread-id="${device.type}_${device.id}" onclick="toggleThread('${device.type}', ${device.id}, this)" style="${threadButtonColor}">${threadButtonText}</button></td>
-                <td><button onclick="viewStream('${device.type}', ${device.id}, this)">View Stream</button></td>
-            `;
-            tableBody.appendChild(row);
-        });
+            console.log('✓ Table updated successfully');
         } catch (error) {
-            console.error('Error loading devices:', error);
+            if (error.name === 'AbortError') {
+                console.error('Request timeout - servers may be offline');
+                tableBody.innerHTML = '<tr><td colspan="9">Request timeout - check if servers are running</td></tr>';
+            } else {
+                console.error('Error loading devices:', error);
+                tableBody.innerHTML = '<tr><td colspan="9">Error: ' + error.message + '</td></tr>';
+            }
         }
     }
     
@@ -244,7 +166,6 @@
             const selects = row.querySelectorAll('select');
             const modelValue = selects[0].value;
             const classifierValue = selects[1].value;
-            const settingsValue = selects[2].value;
             let url;
             if (type === 'legacy') {
                 url = `/legacy-camera-video/${id}`;
@@ -256,7 +177,6 @@
             const params = [];
             if (modelValue) params.push(`model=${encodeURIComponent(modelValue)}`);
             if (classifierValue) params.push(`classifier=${encodeURIComponent(classifierValue)}`);
-            if (settingsValue) params.push(`settings=${encodeURIComponent(settingsValue)}`);
             if (params.length) url += '?' + params.join('&');
             
             // Reset all other view stream buttons
@@ -275,32 +195,20 @@
     }
     
     window.onload = function() {
+        console.log('Page loaded, initializing...');
+        
+        // Attach event listener to refresh button
+        const refreshBtn = document.getElementById('refreshBtn');
+        if (refreshBtn) {
+            refreshBtn.addEventListener('click', function() {
+                console.log('Refresh button clicked');
+                loadDevices();
+            });
+        }
+        
+        // Initial load
         loadDevices();
-        document.getElementById('addSettingsBtn').addEventListener('click', function() {
-            const form = document.getElementById('settingsForm');
-            if (form.style.display === 'none') {
-                form.style.display = 'block';
-            } else {
-                form.style.display = 'none';
-            }
-        });
     };
-
-    function editSettings(name, min_conf, min_d_detect, min_d_save, bb_factor, vol_x, vol_exp) {
-        document.getElementById('edit_setting_name').value = name;
-        document.getElementById('edit_min_conf').value = min_conf;
-        document.getElementById('edit_min_d_detect').value = min_d_detect;
-        document.getElementById('edit_min_d_save').value = min_d_save;
-        document.getElementById('edit_particle_bb_dimension_factor').value = bb_factor;
-        document.getElementById('edit_est_particle_volume_x').value = vol_x;
-        document.getElementById('edit_est_particle_volume_exp').value = vol_exp;
-        document.getElementById('editForm').action = '{{ url_for("camera.update_camera_settings", setting_name="") }}'.replace('setting_name=', 'setting_name=' + name);
-        document.getElementById('editSettingsForm').style.display = 'block';
-    }
-
-    function cancelEdit() {
-        document.getElementById('editSettingsForm').style.display = 'none';
-    }
 
     async function toggleThread(type, id, btn) {
         const threadId = `${type}_${id}`;
@@ -308,7 +216,6 @@
         const selects = row.querySelectorAll('select');
         const modelValue = selects[0].value;
         const classifierValue = selects[1].value;
-        const settingsValue = selects[2].value;
         
         if (btn.textContent === 'Start Thread') {
             // Start thread
@@ -322,8 +229,7 @@
                         type: type,
                         id: id,
                         model: modelValue,
-                        classifier: classifierValue,
-                        settings: settingsValue
+                        classifier: classifierValue
                     })
                 });
                 
@@ -361,34 +267,6 @@
             }
         }
     }
-    
-    // Update thread button states periodically
-    async function updateThreadStates() {
-        try {
-            const response = await fetch('/active-threads');
-            const threads = await response.json();
-            
-            // Create a set of active thread IDs
-            const activeThreadIds = new Set(threads.filter(t => t.running).map(t => t.thread_id));
-            
-            // Update all thread buttons
-            document.querySelectorAll('.thread-btn').forEach(btn => {
-                const threadId = btn.getAttribute('data-thread-id');
-                if (activeThreadIds.has(threadId)) {
-                    btn.textContent = 'Stop Thread';
-                    btn.style.backgroundColor = '#ff4444';
-                } else {
-                    btn.textContent = 'Start Thread';
-                    btn.style.backgroundColor = '';
-                }
-            });
-        } catch (error) {
-            console.error('Error updating thread states:', error);
-        }
-    }
-    
-    // Update thread states every 3 seconds
-    setInterval(updateThreadStates, 3000);
 
 </script>
 {% endblock %}

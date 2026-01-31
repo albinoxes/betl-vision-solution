@@ -1,6 +1,10 @@
 import os
 import paramiko
 from sqlite.sftp_sqlite_provider import SftpServerInfos
+from infrastructure.logging.logging_provider import get_logger
+
+# Initialize logger
+logger = get_logger()
 
 
 class SftpProcessor:
@@ -75,7 +79,7 @@ class SftpProcessor:
             remote_file_path = f"{target_directory}/{file_name}"
             sftp.put(file_path, remote_file_path)
             
-            print(f"Successfully uploaded {file_name} to {remote_file_path}")
+            logger.info(f"Successfully uploaded {file_name} to {remote_file_path}")
             
             return {
                 'success': True,
@@ -86,7 +90,7 @@ class SftpProcessor:
             }
             
         except Exception as e:
-            print(f"Error during SFTP upload: {e}")
+            logger.error(f"Error during SFTP upload: {e}")
             return {
                 'success': False,
                 'error': f'SFTP upload error: {str(e)}'
@@ -127,9 +131,9 @@ class SftpProcessor:
             except FileNotFoundError:
                 try:
                     sftp.mkdir(directory)
-                    print(f"Created remote directory: {directory}")
+                    logger.info(f"Created remote directory: {directory}")
                 except Exception as e:
-                    print(f"Warning: Could not create directory {directory}: {e}")
+                    logger.warning(f"Warning: Could not create directory {directory}: {e}")
 
 
 # Global instance

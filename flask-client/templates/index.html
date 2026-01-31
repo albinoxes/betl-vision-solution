@@ -22,7 +22,7 @@
             <th>Classifier</th>
             <th>Settings</th>
             <th>Status</th>
-            <th>Frames Processed</th>
+            <th>Processed Frames</th>
             <th>Uptime (seconds)</th>
         </tr>
     </thead>
@@ -81,9 +81,6 @@
             console.error('Error fetching threads:', error);
         }
     }
-    
-    // Refresh threads every 2 seconds
-    setInterval(refreshThreads, 2000);
     
     // Initial load
     window.onload = function() {

@@ -1,5 +1,5 @@
 import cv2
-from sqlite.camera_settings_sqlite_provider import camera_settings_provider
+from sqlite.detection_model_settings_sqlite_provider import detection_model_settings_provider
 from sqlite.ml_sqlite_provider import ml_provider
 
 
@@ -25,9 +25,14 @@ class DetectedParticle:
 class CameraSettings:
     """Represents camera settings for particle detection."""
     
-    def __init__(self, min_conf, pixels_per_mm, particle_bb_dimension_factor, est_particle_volume_x, est_particle_volume_exp):
+    def __init__(self, min_conf, pixels_per_mm, min_d_detect, min_d_save, max_d_detect, max_d_save, 
+                 particle_bb_dimension_factor, est_particle_volume_x, est_particle_volume_exp):
         self.min_conf = min_conf
         self.pixels_per_mm = pixels_per_mm
+        self.min_d_detect = min_d_detect
+        self.min_d_save = min_d_save
+        self.max_d_detect = max_d_detect
+        self.max_d_save = max_d_save
         self.particle_bb_dimension_factor = particle_bb_dimension_factor
         self.est_particle_volume_x = est_particle_volume_x
         self.est_particle_volume_exp = est_particle_volume_exp
@@ -35,6 +40,8 @@ class CameraSettings:
     def __repr__(self):
         return (f"CameraSettings(min_conf={self.min_conf}, "
                 f"pixels_per_mm={self.pixels_per_mm:.4f}, "
+                f"min_d_detect={self.min_d_detect}, min_d_save={self.min_d_save}, "
+                f"max_d_detect={self.max_d_detect}, max_d_save={self.max_d_save}, "
                 f"particle_bb_dimension_factor={self.particle_bb_dimension_factor}, "
                 f"est_particle_volume_x={self.est_particle_volume_x:.2e}, "
                 f"est_particle_volume_exp={self.est_particle_volume_exp})")
@@ -67,10 +74,10 @@ def get_camera_settings(settings_id=None):
     settings = None
     if settings_id is not None:
         # Get by name or id - assuming name is used as identifier
-        settings = camera_settings_provider.get_settings(settings_id)
+        settings = detection_model_settings_provider.get_settings(settings_id)
     else:
         # Get first available settings
-        all_settings = camera_settings_provider.list_settings()
+        all_settings = detection_model_settings_provider.list_settings()
         if all_settings:
             settings = all_settings[0]
     
@@ -79,25 +86,50 @@ def get_camera_settings(settings_id=None):
         return CameraSettings(
             min_conf=0.8,
             pixels_per_mm=1 / (900 / 240),
+            min_d_detect=200,
+            min_d_save=200,
+            max_d_detect=10000,
+            max_d_save=10000,
             particle_bb_dimension_factor=0.9,
             est_particle_volume_x=8.357470139e-11,
             est_particle_volume_exp=3.02511466443
         )
     
-    # Parse settings tuple: (id, name, min_conf, min_d_detect, min_d_save, particle_bb_dimension_factor, est_particle_volume_x, est_particle_volume_exp, created_at, updated_at)
+    # Parse settings tuple: (id, name, min_conf, min_d_detect, min_d_save, max_d_detect, max_d_save, particle_bb_dimension_factor, est_particle_volume_x, est_particle_volume_exp, created_at, updated_at)
     pixels_per_mm = 1 / (900 / 240)  # This is calculated, not stored in DB
     
     return CameraSettings(
         min_conf=settings[2],
         pixels_per_mm=pixels_per_mm,
-        particle_bb_dimension_factor=settings[5],
-        est_particle_volume_x=settings[6],
-        est_particle_volume_exp=settings[7]
+        min_d_detect=settings[3],
+        min_d_save=settings[4],
+        max_d_detect=settings[5],
+        max_d_save=settings[6],
+        particle_bb_dimension_factor=settings[7],
+        est_particle_volume_x=settings[8],
+        est_particle_volume_exp=settings[9]
     )
 
 
 # Run boulder detection model
 def object_process_image(img2d, model=None, model_id=None, settings=None, settings_id=None):
+    """
+    Process an image with the boulder detection model.
+    
+    Args:
+        img2d: Input image as numpy array
+        model: Pre-loaded model (optional, will load from DB if not provided)
+        model_id: Model identifier (optional)
+        settings: Pre-loaded CameraSettings (optional, will load from DB if not provided)
+        settings_id: Settings identifier (optional)
+    
+    Returns:
+        list: [image_path, xyxy_boxes, particles_to_detect, particles_to_save]
+            - image_path: Path to the processed image
+            - xyxy_boxes: List of bounding boxes in xyxy format
+            - particles_to_detect: List of DetectedParticle objects within [min_d_detect, max_d_detect] range (for reporting/CSV)
+            - particles_to_save: List of DetectedParticle objects within [min_d_save, max_d_save] range (for storage)
+    """
     # Get model from database if not provided
     if model is None:
         model = get_model_from_database(model_id)
@@ -128,7 +160,7 @@ def object_process_image(img2d, model=None, model_id=None, settings=None, settin
     volume_est = [settings.est_particle_volume_x * (d ** settings.est_particle_volume_exp) for d in max_d_mm]
 
     # Create DetectedParticle instances for each detected object
-    particles = [
+    all_particles = [
         DetectedParticle(
             conf=c,
             width_px=wp,
@@ -141,7 +173,20 @@ def object_process_image(img2d, model=None, model_id=None, settings=None, settin
         for c, wp, hp, wm, hm, md, ve in zip(conf, width_px, height_px, width_mm, height_mm, max_d_mm, volume_est)
     ]
 
-    # Prepare the result with image, bounding boxes, and particle objects
-    result = [image, xyxy, particles]
+    # Filter particles based on min_d_detect and max_d_detect (dimension range to report)
+    particles_to_detect = [
+        p for p in all_particles 
+        if settings.min_d_detect <= p.max_d_mm <= settings.max_d_detect
+    ]
+    
+    # Filter particles based on min_d_save and max_d_save (dimension range to save/store)
+    particles_to_save = [
+        p for p in all_particles 
+        if settings.min_d_save <= p.max_d_mm <= settings.max_d_save
+    ]
+
+    # Prepare the result with image, bounding boxes, and filtered particle objects
+    # Returns: [image, xyxy, particles_to_detect, particles_to_save]
+    result = [image, xyxy, particles_to_detect, particles_to_save]
 
     return result
