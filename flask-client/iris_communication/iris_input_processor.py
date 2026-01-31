@@ -3,6 +3,10 @@ import pandas as pd
 from pathlib import Path
 from datetime import datetime
 from typing import Any, Optional
+from infrastructure.logging.logging_provider import get_logger
+
+# Initialize logger
+logger = get_logger()
 
 
 class IrisInputProcessor:
@@ -132,11 +136,11 @@ class IrisInputProcessor:
                 if elapsed_seconds >= csv_interval_seconds:
                     # Interval elapsed, create new file
                     create_new_file = True
-                    print(f"[IRIS] {folder_type.capitalize()} CSV interval elapsed ({elapsed_seconds:.1f}s), creating new file")
+                    logger.info(f"[IRIS] {folder_type.capitalize()} CSV interval elapsed ({elapsed_seconds:.1f}s), creating new file")
                 else:
                     # Use existing file
                     csv_filepath = Path(active_info['path'])
-                    print(f"[IRIS] Appending to existing {folder_type} CSV: {csv_filepath.name}")
+                    logger.info(f"[IRIS] Appending to existing {folder_type} CSV: {csv_filepath.name}")
             else:
                 # No active file, create new one
                 create_new_file = True
@@ -145,7 +149,7 @@ class IrisInputProcessor:
             if create_new_file:
                 csv_filename = f"{csv_name}.csv"
                 csv_filepath = iris_path / csv_filename
-                print(f"[IRIS] Creating new CSV file: {csv_filepath}")
+                logger.info(f"[IRIS] Creating new CSV file: {csv_filepath}")
                 
                 # Track this as the active CSV file
                 self.active_csv_files[folder_type] = {
@@ -179,7 +183,7 @@ class IrisInputProcessor:
             return str(csv_filepath)
             
         except Exception as e:
-            print(f"Error generating IRIS input data: {e}")
+            logger.error(f"Error generating IRIS input data: {e}")
             return None
     
     def generate_iris_input_data(self, project_settings, timestamp: datetime, data: Any, folder_type: str, image_filename: str = '') -> Optional[str]:
@@ -197,11 +201,11 @@ class IrisInputProcessor:
             Path to the created CSV file, or None if not created
         """
         if not project_settings:
-            print(f"[IRIS] Skipping {folder_type} CSV - No project settings found")
+            logger.warning(f"[IRIS] Skipping {folder_type} CSV - No project settings found")
             return None
         
         if not project_settings.iris_main_folder:
-            print(f"[IRIS] Skipping {folder_type} CSV - No main folder configured")
+            logger.warning(f"[IRIS] Skipping {folder_type} CSV - No main folder configured")
             return None
         
         # Get CSV interval from project settings
@@ -211,20 +215,20 @@ class IrisInputProcessor:
         if folder_type == 'model':
             subfolder = project_settings.iris_model_subfolder
             if not subfolder:
-                print(f"[IRIS] Skipping model CSV - No model subfolder configured")
+                logger.warning(f"[IRIS] Skipping model CSV - No model subfolder configured")
                 return None
         elif folder_type == 'classifier':
             subfolder = project_settings.iris_classifier_subfolder
             if not subfolder:
-                print(f"[IRIS] Skipping classifier CSV - No classifier subfolder configured")
+                logger.warning(f"[IRIS] Skipping classifier CSV - No classifier subfolder configured")
                 return None
         else:
-            print(f"[IRIS] Invalid folder type: {folder_type}")
+            logger.error(f"[IRIS] Invalid folder type: {folder_type}")
             return None
         
         # Generate CSV name
         csv_name = f"{subfolder}_{timestamp.strftime('%Y%m%d_%H%M%S_%f')}"
-        print(f"[IRIS] Generating {folder_type} CSV: {csv_name}")
+        logger.info(f"[IRIS] Generating {folder_type} CSV: {csv_name}")
         
         # Create CSV
         csv_path = self.create_iris_csv_input(
@@ -241,7 +245,7 @@ class IrisInputProcessor:
         )
         
         if csv_path:
-            print(f"[IRIS] {folder_type.capitalize()} CSV created at: {csv_path}")
+            logger.info(f"[IRIS] {folder_type.capitalize()} CSV created at: {csv_path}")
         
         return csv_path
 

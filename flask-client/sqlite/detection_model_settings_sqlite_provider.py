@@ -1,6 +1,10 @@
 import sqlite3
 from datetime import datetime
 from typing import Optional, Tuple, List
+from infrastructure.logging.logging_provider import get_logger
+
+# Initialize logger
+logger = get_logger()
 
 
 class DetectionModelSettingsSQLiteProvider:
@@ -39,11 +43,11 @@ class DetectionModelSettingsSQLiteProvider:
             
             if 'max_d_detect' not in columns:
                 conn.execute('ALTER TABLE detection_model_settings ADD COLUMN max_d_detect INTEGER NOT NULL DEFAULT 10000')
-                print("[Migration] Added max_d_detect column")
+                logger.info("[Migration] Added max_d_detect column")
             
             if 'max_d_save' not in columns:
                 conn.execute('ALTER TABLE detection_model_settings ADD COLUMN max_d_save INTEGER NOT NULL DEFAULT 10000')
-                print("[Migration] Added max_d_save column")
+                logger.info("[Migration] Added max_d_save column")
             
             # Insert default settings if not exists
             cursor.execute('SELECT COUNT(*) FROM detection_model_settings WHERE name = ?', ('default',))

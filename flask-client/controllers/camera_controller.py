@@ -12,6 +12,10 @@ from sqlite.video_stream_sqlite_provider import video_stream_provider
 from iris_communication.iris_input_processor import iris_input_processor
 from iris_communication.sftp_processor import sftp_processor
 from sqlite.sftp_sqlite_provider import sftp_provider
+from infrastructure.logging.logging_provider import get_logger
+
+# Initialize logger
+logger = get_logger()
 
 CAMERA_URL = "http://localhost:5001/video"
 
@@ -51,9 +55,9 @@ def process_video_stream_background(thread_id, url, model_id=None, classifier_id
         all_settings = detection_model_settings_provider.list_settings()
         if all_settings and len(all_settings) > 0:
             settings_id = all_settings[0][1]  # Get the name from the first setting
-            print(f"[Thread {thread_id}] No settings specified, using first available: {settings_id}")
+            logger.info(f"[Thread {thread_id}] No settings specified, using first available: {settings_id}")
         else:
-            print(f"[Thread {thread_id}] Warning: No camera settings found in database")
+            logger.warning(f"[Thread {thread_id}] Warning: No camera settings found in database")
     
     # Get project title and settings once before processing frames
     from sqlite.project_settings_sqlite_provider import project_settings_provider
@@ -62,14 +66,14 @@ def process_video_stream_background(thread_id, url, model_id=None, classifier_id
     
     # Debug logging for IRIS configuration
     if project_settings:
-        print(f"[IRIS] Project settings loaded: {project_title}")
-        print(f"[IRIS] Main folder: {project_settings.iris_main_folder}")
-        print(f"[IRIS] Model subfolder: {project_settings.iris_model_subfolder}")
-        print(f"[IRIS] Classifier subfolder: {project_settings.iris_classifier_subfolder}")
-        print(f"[IRIS] Image processing interval: {project_settings.image_processing_interval}s")
+        logger.info(f"[IRIS] Project settings loaded: {project_title}")
+        logger.info(f"[IRIS] Main folder: {project_settings.iris_main_folder}")
+        logger.info(f"[IRIS] Model subfolder: {project_settings.iris_model_subfolder}")
+        logger.info(f"[IRIS] Classifier subfolder: {project_settings.iris_classifier_subfolder}")
+        logger.info(f"[IRIS] Image processing interval: {project_settings.image_processing_interval}s")
         processing_interval = project_settings.image_processing_interval
     else:
-        print(f"[IRIS] Warning: No project settings found!")
+        logger.warning(f"[IRIS] Warning: No project settings found!")
         processing_interval = PROCESSING_INTERVAL_SECONDS  # Fallback to hardcoded value
     
     frame_count = 0
@@ -87,11 +91,11 @@ def process_video_stream_background(thread_id, url, model_id=None, classifier_id
         all_sftp_servers = sftp_provider.get_all_servers()
         if all_sftp_servers and len(all_sftp_servers) > 0:
             sftp_server_info = all_sftp_servers[0]
-            print(f"[SFTP] Using SFTP server: {sftp_server_info.server_name}")
+            logger.info(f"[SFTP] Using SFTP server: {sftp_server_info.server_name}")
         else:
-            print(f"[SFTP] No SFTP server configured. Files will not be uploaded.")
+            logger.info(f"[SFTP] No SFTP server configured. Files will not be uploaded.")
     except Exception as e:
-        print(f"[SFTP] Error loading SFTP server info: {e}")
+        logger.error(f"[SFTP] Error loading SFTP server info: {e}")
     
     with thread_lock:
         if thread_id in active_threads:
@@ -102,9 +106,9 @@ def process_video_stream_background(thread_id, url, model_id=None, classifier_id
     # Create new connection for each request cycle
     current_request = None
     
-    print(f"[Thread {thread_id}] Starting stream processing")
-    print(f"[Thread {thread_id}] URL: {url}")
-    print(f"[Thread {thread_id}] Model ID: {model_id}, Classifier ID: {classifier_id}, Settings ID: {settings_id}")
+    logger.info(f"[Thread {thread_id}] Starting stream processing")
+    logger.info(f"[Thread {thread_id}] URL: {url}")
+    logger.info(f"[Thread {thread_id}] Model ID: {model_id}, Classifier ID: {classifier_id}, Settings ID: {settings_id}")
     
     try:
         while True:
@@ -115,11 +119,11 @@ def process_video_stream_background(thread_id, url, model_id=None, classifier_id
             
             try:
                 # Use timeout only for connection, not for reading stream (None for read timeout)
-                print(f"[Thread {thread_id}] Connecting to video stream...")
+                logger.info(f"[Thread {thread_id}] Connecting to video stream...")
                 # Don't reuse connections - create fresh request each time
                 current_request = requests.get(url, stream=True, timeout=(5, None))
                 r = current_request
-                print(f"[Thread {thread_id}] Connected successfully, starting frame processing")
+                logger.info(f"[Thread {thread_id}] Connected successfully, starting frame processing")
                 boundary = b'--frame'
                 buffer = b''
                 
@@ -180,25 +184,25 @@ def process_video_stream_background(thread_id, url, model_id=None, classifier_id
                                                     file_path=filepath
                                                 )
                                             except Exception as e:
-                                                print(f"Error inserting frame record to database: {e}")
+                                                logger.error(f"Error inserting frame record to database: {e}")
                                         
                                         # Update last frame save time
                                         last_frame_save_time = current_time
                                     except Exception as e:
-                                        print(f"Error saving frame: {e}")
+                                        logger.error(f"Error saving frame: {e}")
                                 
                                 # Lazy-load model only when we need to process
                                 if model_id and not model_loaded:
                                     from computer_vision.ml_model_image_processor import get_model_from_database, get_camera_settings
                                     try:
-                                        print(f"[Model] Lazy-loading model: {model_id}, settings: {settings_id}")
+                                        logger.info(f"[Model] Lazy-loading model: {model_id}, settings: {settings_id}")
                                         model = get_model_from_database(model_id)
                                         settings = get_camera_settings(settings_id)
                                         model_loaded = True
-                                        print(f"[Model] Model loaded successfully: {model}")
-                                        print(f"[Model] Settings loaded: {settings}")
+                                        logger.info(f"[Model] Model loaded successfully: {model}")
+                                        logger.info(f"[Model] Settings loaded: {settings}")
                                     except Exception as e:
-                                        print(f"[Model] Error loading model or settings: {e}")
+                                        logger.error(f"[Model] Error loading model or settings: {e}")
                                         import traceback
                                         traceback.print_exc()
                                         model = None
@@ -207,14 +211,14 @@ def process_video_stream_background(thread_id, url, model_id=None, classifier_id
                                     pass  # Model already loaded
                                 else:
                                     if not model_id:
-                                        print(f"[Model] No model_id provided, skipping model processing")
+                                        logger.debug(f"[Model] No model_id provided, skipping model processing")
                                 
                                 # Process with ML models if specified
                                 if model is not None:
                                     # Check if processing interval has elapsed
                                     current_time = time.time()
                                     if current_time - last_model_processing_time >= processing_interval:
-                                        print(f"[Processing] Model processing frame at {current_time:.2f}, interval: {current_time - last_model_processing_time:.2f}s")
+                                        logger.debug(f"[Processing] Model processing frame at {current_time:.2f}, interval: {current_time - last_model_processing_time:.2f}s")
                                         try:
                                             # Increment frame count for processed frame
                                             frame_count += 1
@@ -239,7 +243,7 @@ def process_video_stream_background(thread_id, url, model_id=None, classifier_id
                                             if csv_path and csv_path != previous_model_csv_path:
                                                 if previous_model_csv_path and sftp_server_info:
                                                     try:
-                                                        print(f"[SFTP] Uploading previous model CSV: {previous_model_csv_path}")
+                                                        logger.info(f"[SFTP] Uploading previous model CSV: {previous_model_csv_path}")
                                                         upload_result = sftp_processor.transferData(
                                                             sftp_server_info=sftp_server_info,
                                                             file_path=previous_model_csv_path,
@@ -247,11 +251,11 @@ def process_video_stream_background(thread_id, url, model_id=None, classifier_id
                                                             folder_type='model'
                                                         )
                                                         if upload_result['success']:
-                                                            print(f"[SFTP] Successfully uploaded: {upload_result['remote_path']}")
+                                                            logger.info(f"[SFTP] Successfully uploaded: {upload_result['remote_path']}")
                                                         else:
-                                                            print(f"[SFTP] Upload failed: {upload_result.get('error', 'Unknown error')}")
+                                                            logger.error(f"[SFTP] Upload failed: {upload_result.get('error', 'Unknown error')}")
                                                     except Exception as e:
-                                                        print(f"[SFTP] Error uploading model CSV: {e}")
+                                                        logger.error(f"[SFTP] Error uploading model CSV: {e}")
                                                 
                                                 # Update to current CSV path
                                                 previous_model_csv_path = csv_path
@@ -259,13 +263,13 @@ def process_video_stream_background(thread_id, url, model_id=None, classifier_id
                                             # Update last processing time
                                             last_model_processing_time = current_time
                                         except Exception as e:
-                                            print(f"Error processing with model: {e}")
+                                            logger.error(f"Error processing with model: {e}")
                                 
                                 if classifier_id:
                                     # Check if processing interval has elapsed
                                     current_time = time.time()
                                     if current_time - last_classifier_processing_time >= processing_interval:
-                                        print(f"[Processing] Classifier processing frame at {current_time:.2f}, interval: {current_time - last_classifier_processing_time:.2f}s")
+                                        logger.debug(f"[Processing] Classifier processing frame at {current_time:.2f}, interval: {current_time - last_classifier_processing_time:.2f}s")
                                         try:
                                             # Increment frame count for processed frame (if not already incremented by model)
                                             if not model_id:
@@ -285,7 +289,7 @@ def process_video_stream_background(thread_id, url, model_id=None, classifier_id
                                             if csv_path and csv_path != previous_classifier_csv_path:
                                                 if previous_classifier_csv_path and sftp_server_info:
                                                     try:
-                                                        print(f"[SFTP] Uploading previous classifier CSV: {previous_classifier_csv_path}")
+                                                        logger.info(f"[SFTP] Uploading previous classifier CSV: {previous_classifier_csv_path}")
                                                         upload_result = sftp_processor.transferData(
                                                             sftp_server_info=sftp_server_info,
                                                             file_path=previous_classifier_csv_path,
@@ -293,11 +297,11 @@ def process_video_stream_background(thread_id, url, model_id=None, classifier_id
                                                             folder_type='classifier'
                                                         )
                                                         if upload_result['success']:
-                                                            print(f"[SFTP] Successfully uploaded: {upload_result['remote_path']}")
+                                                            logger.info(f"[SFTP] Successfully uploaded: {upload_result['remote_path']}")
                                                         else:
-                                                            print(f"[SFTP] Upload failed: {upload_result.get('error', 'Unknown error')}")
+                                                            logger.error(f"[SFTP] Upload failed: {upload_result.get('error', 'Unknown error')}")
                                                     except Exception as e:
-                                                        print(f"[SFTP] Error uploading classifier CSV: {e}")
+                                                        logger.error(f"[SFTP] Error uploading classifier CSV: {e}")
                                                 
                                                 # Update to current CSV path
                                                 previous_classifier_csv_path = csv_path
@@ -305,7 +309,7 @@ def process_video_stream_background(thread_id, url, model_id=None, classifier_id
                                             # Update last processing time
                                             last_classifier_processing_time = current_time
                                         except Exception as e:
-                                            print(f"Error processing with classifier: {e}")
+                                            logger.error(f"Error processing with classifier: {e}")
                                 
                                 # Update frame count
                                 with thread_lock:
@@ -323,7 +327,7 @@ def process_video_stream_background(thread_id, url, model_id=None, classifier_id
                 
             except requests.exceptions.Timeout as e:
                 # Timeout error - don't retry, just stop
-                print(f"[Error] Timeout in thread {thread_id}: {e}")
+                logger.error(f"[Error] Timeout in thread {thread_id}: {e}")
                 with thread_lock:
                     if thread_id in active_threads:
                         active_threads[thread_id]['status'] = 'error: timeout'
@@ -331,14 +335,14 @@ def process_video_stream_background(thread_id, url, model_id=None, classifier_id
                 
             except requests.exceptions.ConnectionError as e:
                 # Connection error - server might be down
-                print(f"[Error] Connection error in thread {thread_id}: Server unreachable or not running")
+                logger.error(f"[Error] Connection error in thread {thread_id}: Server unreachable or not running")
                 with thread_lock:
                     if thread_id in active_threads:
                         active_threads[thread_id]['status'] = 'error: server unreachable'
                 break
                 
             except Exception as e:
-                print(f"[Error] Unexpected error in thread {thread_id}: {e}")
+                logger.error(f"[Error] Unexpected error in thread {thread_id}: {e}")
                 # Check if thread should stop before retrying
                 with thread_lock:
                     if thread_id not in active_threads or not active_threads[thread_id]['running']:
@@ -348,14 +352,14 @@ def process_video_stream_background(thread_id, url, model_id=None, classifier_id
                 break
     finally:
         # Clean up resources
-        print(f"[Cleanup] Stopping thread {thread_id}")
+        logger.info(f"[Cleanup] Stopping thread {thread_id}")
         
         # Explicitly delete model to free memory
         if model is not None:
             try:
                 del model
                 del settings
-                print(f"[Cleanup] ML model unloaded from memory")
+                logger.info(f"[Cleanup] ML model unloaded from memory")
             except:
                 pass
         
@@ -363,18 +367,18 @@ def process_video_stream_background(thread_id, url, model_id=None, classifier_id
         try:
             store_data_manager.end_session(thread_id)
         except Exception as e:
-            print(f"Error ending session: {e}")
+            logger.error(f"Error ending session: {e}")
         
         # Close any open request
         if current_request:
             try:
-                print(f"[Cleanup] Closing HTTP connection for thread {thread_id}")
+                logger.info(f"[Cleanup] Closing HTTP connection for thread {thread_id}")
                 current_request.close()
                 # Force close the underlying connection
                 if hasattr(current_request, 'raw'):
                     current_request.raw.close()
             except Exception as e:
-                print(f"[Cleanup] Error closing request: {e}")
+                logger.error(f"[Cleanup] Error closing request: {e}")
             
         with thread_lock:
             if thread_id in active_threads:
@@ -400,70 +404,82 @@ def process_video_stream(url, model_id=None, classifier_id=None, settings_id=Non
             model = get_model_from_database(model_id)
             settings = get_camera_settings(settings_id)  # Use specified settings or default
         except Exception as e:
-            print(f"Error loading model or settings: {e}")
+            logger.error(f"Error loading model or settings: {e}")
     
-    r = requests.get(url, stream=True)
-    boundary = b'--frame'
-    buffer = b''
-    
-    for chunk in r.iter_content(chunk_size=8192):
-        buffer += chunk
-        while boundary in buffer:
-            start = buffer.find(boundary)
-            end = buffer.find(boundary, start + 1)
-            if end == -1:
-                break
-            
-            frame_data = buffer[start:end]
-            buffer = buffer[end:]
-            
-            # Extract JPEG image from frame
-            header_end = frame_data.find(b'\r\n\r\n')
-            if header_end != -1:
-                jpeg_start = header_end + 4
-                jpeg_end = frame_data.find(b'\r\n', jpeg_start)
-                if jpeg_end == -1:
-                    jpeg_data = frame_data[jpeg_start:]
-                else:
-                    jpeg_data = frame_data[jpeg_start:jpeg_end]
+    # Use timeout and proper connection management to prevent socket exhaustion
+    r = None
+    try:
+        r = requests.get(url, stream=True, timeout=(5, None))
+        boundary = b'--frame'
+        buffer = b''
+        
+        for chunk in r.iter_content(chunk_size=8192):
+            buffer += chunk
+            while boundary in buffer:
+                start = buffer.find(boundary)
+                end = buffer.find(boundary, start + 1)
+                if end == -1:
+                    break
                 
-                # Decode JPEG to numpy array
-                nparr = np.frombuffer(jpeg_data, np.uint8)
-                img2d = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+                frame_data = buffer[start:end]
+                buffer = buffer[end:]
                 
-                if img2d is not None:
-                    # Process with ML models if specified
-                    if model is not None:
-                        try:
-                            result = object_process_image(img2d.copy(), model=model, settings=settings)
-                            # Annotate image with detection results
-                            # result format: [image, xyxy, particles_to_detect, particles_to_save]
-                            particles_to_detect = result[2]
-                            for i, box in enumerate(result[1]):
-                                cv2.rectangle(img2d, (int(box[0]), int(box[1])), (int(box[2]), int(box[3])), (255, 0, 0), 2)
-                                cv2.putText(img2d, f'{particles_to_detect[i].max_d_mm}mm', (int(box[0]), int(box[1]-10)), 
-                                          cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 1)
-                        except Exception as e:
-                            print(f"Error processing with model: {e}")
+                # Extract JPEG image from frame
+                header_end = frame_data.find(b'\r\n\r\n')
+                if header_end != -1:
+                    jpeg_start = header_end + 4
+                    jpeg_end = frame_data.find(b'\r\n', jpeg_start)
+                    if jpeg_end == -1:
+                        jpeg_data = frame_data[jpeg_start:]
+                    else:
+                        jpeg_data = frame_data[jpeg_start:jpeg_end]
                     
-                    if classifier_id:
-                        try:
-                            belt_status = classifier_process_image(img2d.copy(), classifier_id=classifier_id)
-                            cv2.putText(img2d, f'Status: {belt_status}', (10, 30), 
-                                      cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-                        except Exception as e:
-                            print(f"Error processing with classifier: {e}")
+                    # Decode JPEG to numpy array
+                    nparr = np.frombuffer(jpeg_data, np.uint8)
+                    img2d = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
                     
-                    # Re-encode processed image
-                    _, encoded_img = cv2.imencode('.jpg', img2d)
-                    yield (b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' + encoded_img.tobytes() + b'\r\n')
-                else:
-                    # If decode failed, pass through original frame
-                    yield frame_data + b'\r\n'
-    
-    # Yield any remaining buffer
-    if buffer:
-        yield buffer
+                    if img2d is not None:
+                        # Process with ML models if specified
+                        if model is not None:
+                            try:
+                                result = object_process_image(img2d.copy(), model=model, settings=settings)
+                                # Annotate image with detection results
+                                # result format: [image, xyxy, particles_to_detect, particles_to_save]
+                                particles_to_detect = result[2]
+                                for i, box in enumerate(result[1]):
+                                    cv2.rectangle(img2d, (int(box[0]), int(box[1])), (int(box[2]), int(box[3])), (255, 0, 0), 2)
+                                    cv2.putText(img2d, f'{particles_to_detect[i].max_d_mm}mm', (int(box[0]), int(box[1]-10)), 
+                                              cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 1)
+                            except Exception as e:
+                                logger.error(f"Error processing with model: {e}")
+                        
+                        if classifier_id:
+                            try:
+                                belt_status = classifier_process_image(img2d.copy(), classifier_id=classifier_id)
+                                cv2.putText(img2d, f'Status: {belt_status}', (10, 30), 
+                                          cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+                            except Exception as e:
+                                logger.error(f"Error processing with classifier: {e}")
+                        
+                        # Re-encode processed image
+                        _, encoded_img = cv2.imencode('.jpg', img2d)
+                        yield (b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' + encoded_img.tobytes() + b'\r\n')
+                    else:
+                        # If decode failed, pass through original frame
+                        yield frame_data + b'\r\n'
+        
+        # Yield any remaining buffer
+        if buffer:
+            yield buffer
+    finally:
+        # Always close the connection to prevent socket exhaustion
+        if r is not None:
+            try:
+                r.close()
+                if hasattr(r, 'raw'):
+                    r.raw.close()
+            except Exception as e:
+                logger.error(f"Error closing stream connection: {e}")
 
 camera_bp = Blueprint('camera', __name__)
 
@@ -488,10 +504,23 @@ def legacy_camera_video(device_id):
     settings_param = request.args.get('settings')
     url = f"http://localhost:5002/camera-video/{device_id}"
     
-    # If no processing is requested, use simple passthrough
+    # If no processing is requested, use simple passthrough with proper cleanup
     if not model_param and not classifier_param:
-        r = requests.get(url, stream=True)
-        return Response(r.iter_content(chunk_size=1024),
+        def generate_with_cleanup():
+            r = None
+            try:
+                r = requests.get(url, stream=True, timeout=(5, None))
+                for chunk in r.iter_content(chunk_size=1024):
+                    yield chunk
+            finally:
+                if r is not None:
+                    try:
+                        r.close()
+                        if hasattr(r, 'raw'):
+                            r.raw.close()
+                    except:
+                        pass
+        return Response(generate_with_cleanup(),
                        mimetype='multipart/x-mixed-replace; boundary=frame')
     
     # Otherwise use processing pipeline
@@ -505,10 +534,23 @@ def simulator_video():
     settings_param = request.args.get('settings')
     url = "http://localhost:5003/video/simulator"
     
-    # If no processing is requested, use simple passthrough
+    # If no processing is requested, use simple passthrough with proper cleanup
     if not model_param and not classifier_param:
-        r = requests.get(url, stream=True)
-        return Response(r.iter_content(chunk_size=1024),
+        def generate_with_cleanup():
+            r = None
+            try:
+                r = requests.get(url, stream=True, timeout=(5, None))
+                for chunk in r.iter_content(chunk_size=1024):
+                    yield chunk
+            finally:
+                if r is not None:
+                    try:
+                        r.close()
+                        if hasattr(r, 'raw'):
+                            r.raw.close()
+                    except:
+                        pass
+        return Response(generate_with_cleanup(),
                        mimetype='multipart/x-mixed-replace; boundary=frame')
     
     # Otherwise use processing pipeline
@@ -524,45 +566,45 @@ def connected_devices():
     
     def query_legacy():
         try:
-            print("[Connected Devices] Querying legacy-camera-server (port 5002)...")
+            logger.info("[Connected Devices] Querying legacy-camera-server (port 5002)...")
             response = requests.get('http://localhost:5002/devices', timeout=2)
             if response.status_code == 200:
                 result = [{'type': 'legacy', 'id': dev['id'], 'info': dev['info'], 
                         'ip': dev['info'].split(';')[0] if ';' in dev['info'] else 'unknown',
                         'status': dev['status']} for dev in response.json()]
-                print(f"[Connected Devices] ✓ Legacy server responded with {len(result)} device(s)")
+                logger.info(f"[Connected Devices] ✓ Legacy server responded with {len(result)} device(s)")
                 return result
         except Exception as e:
-            print(f"[Connected Devices] ✗ Legacy server not responding: {e}")
+            logger.warning(f"[Connected Devices] ✗ Legacy server not responding: {e}")
         return []
     
     def query_webcam():
         try:
-            print("[Connected Devices] Querying webcam-server (port 5001)...")
+            logger.info("[Connected Devices] Querying webcam-server (port 5001)...")
             response = requests.get('http://localhost:5001/devices', timeout=2)
             if response.status_code == 200:
                 result = [{'type': 'webcam', 'id': dev['id'], 'info': dev['info'],
                         'ip': 'localhost', 'status': dev['status']} for dev in response.json()]
-                print(f"[Connected Devices] ✓ Webcam server responded with {len(result)} device(s)")
+                logger.info(f"[Connected Devices] ✓ Webcam server responded with {len(result)} device(s)")
                 return result
         except Exception as e:
-            print(f"[Connected Devices] ✗ Webcam server not responding: {e}")
+            logger.warning(f"[Connected Devices] ✗ Webcam server not responding: {e}")
         return []
     
     def query_simulator():
         try:
-            print("[Connected Devices] Querying simulator-server (port 5003)...")
+            logger.info("[Connected Devices] Querying simulator-server (port 5003)...")
             response = requests.get('http://localhost:5003/devices', timeout=2)
             if response.status_code == 200:
                 result = [{'type': 'simulator', 'id': dev['id'], 'info': dev['info'],
                         'ip': 'localhost', 'status': dev['status']} for dev in response.json()]
-                print(f"[Connected Devices] ✓ Simulator server responded with {len(result)} device(s)")
+                logger.info(f"[Connected Devices] ✓ Simulator server responded with {len(result)} device(s)")
                 return result
         except Exception as e:
-            print(f"[Connected Devices] ✗ Simulator server not responding: {e}")
+            logger.warning(f"[Connected Devices] ✗ Simulator server not responding: {e}")
         return []
     
-    print("[Connected Devices] Starting parallel device query...")
+    logger.info("[Connected Devices] Starting parallel device query...")
     # Execute all queries in parallel
     with ThreadPoolExecutor(max_workers=3) as executor:
         futures = [
@@ -574,7 +616,7 @@ def connected_devices():
         for future in as_completed(futures):
             devices.extend(future.result())
     
-    print(f"[Connected Devices] Total devices found: {len(devices)}")
+    logger.info(f"[Connected Devices] Total devices found: {len(devices)}")
     return jsonify(devices)
 
 @camera_bp.route('/camera-manager')
@@ -600,11 +642,11 @@ def start_thread():
     classifier_id = data.get('classifier')
     settings_id = data.get('settings')
     
-    print(f"[Start Thread] Request received:")
-    print(f"  Device: {device_type}_{device_id}")
-    print(f"  Model ID: '{model_id}' (type: {type(model_id).__name__})")
-    print(f"  Classifier ID: '{classifier_id}' (type: {type(classifier_id).__name__})")
-    print(f"  Settings ID: '{settings_id}' (type: {type(settings_id).__name__})")
+    logger.info(f"[Start Thread] Request received:")
+    logger.info(f"  Device: {device_type}_{device_id}")
+    logger.info(f"  Model ID: '{model_id}' (type: {type(model_id).__name__})")
+    logger.info(f"  Classifier ID: '{classifier_id}' (type: {type(classifier_id).__name__})")
+    logger.info(f"  Settings ID: '{settings_id}' (type: {type(settings_id).__name__})")
     
     # Convert empty strings to None
     if model_id == '':
@@ -614,7 +656,7 @@ def start_thread():
     if settings_id == '':
         settings_id = None
     
-    print(f"[Start Thread] After conversion: model={model_id}, classifier={classifier_id}, settings={settings_id}")
+    logger.info(f"[Start Thread] After conversion: model={model_id}, classifier={classifier_id}, settings={settings_id}")
     
     # Create unique thread ID
     thread_id = f"{device_type}_{device_id}"
@@ -688,15 +730,15 @@ def stop_thread():
         active_threads[thread_id]['status'] = 'stopping'
         thread_obj = active_threads[thread_id].get('thread')
     
-    print(f"[Stop Thread] Stopping thread {thread_id}...")
+    logger.info(f"[Stop Thread] Stopping thread {thread_id}...")
     
     # Wait for thread to actually stop (max 5 seconds)
     if thread_obj and thread_obj.is_alive():
         thread_obj.join(timeout=5)
         if thread_obj.is_alive():
-            print(f"[Stop Thread] Warning: Thread {thread_id} did not stop gracefully")
+            logger.warning(f"[Stop Thread] Warning: Thread {thread_id} did not stop gracefully")
         else:
-            print(f"[Stop Thread] Thread {thread_id} stopped successfully")
+            logger.info(f"[Stop Thread] Thread {thread_id} stopped successfully")
     
     # Clean up thread from active_threads after stopping
     with thread_lock:

@@ -3,6 +3,10 @@ from pathlib import Path
 from datetime import datetime
 from typing import Optional
 from dataclasses import dataclass
+from infrastructure.logging.logging_provider import get_logger
+
+# Initialize logger
+logger = get_logger()
 
 
 @dataclass
@@ -139,7 +143,7 @@ class StoreDataManager:
             # Return relative filepath
             return str(storage_path / filename)
         except Exception as e:
-            print(f"Error saving frame: {e}")
+            logger.error(f"Error saving frame: {e}")
             return False
     
     def get_storage_path(self, project_title: Optional[str] = None) -> Path:
