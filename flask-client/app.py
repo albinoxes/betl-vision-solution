@@ -5,7 +5,9 @@ from controllers.project_controller import project_bp
 from controllers.model_status_controller import model_status_bp
 from controllers.sftp_controller import sftp_bp
 from controllers.detection_model_settings_controller import detection_model_settings_bp
+from controllers.health_controller import health_bp
 from infrastructure.logging.logging_provider import get_logger
+from infrastructure.monitoring import HealthMonitoringService, ServerConfig
 import signal
 import sys
 import atexit
@@ -16,11 +18,46 @@ app = Flask(__name__)
 logger = get_logger()
 logger.start()
 
+# Initialize health monitoring service
+health_service = HealthMonitoringService()
+
+# Register servers for health monitoring
+health_service.register_server(ServerConfig(
+    name="webcam-server",
+    url="http://localhost",
+    port=5001,
+    health_endpoint="/devices",
+    check_interval=5.0,
+    timeout=2.0
+))
+
+health_service.register_server(ServerConfig(
+    name="legacy-camera-server",
+    url="http://localhost",
+    port=5002,
+    health_endpoint="/devices",
+    check_interval=5.0,
+    timeout=2.0
+))
+
+health_service.register_server(ServerConfig(
+    name="simulator-server",
+    url="http://localhost",
+    port=5003,
+    health_endpoint="/devices",
+    check_interval=5.0,
+    timeout=2.0
+))
+
+# Start health monitoring
+health_service.start_all()
+
 app.register_blueprint(camera_bp)
 app.register_blueprint(ml_bp)
 app.register_blueprint(project_bp)
 app.register_blueprint(model_status_bp)
 app.register_blueprint(sftp_bp)
+app.register_blueprint(health_bp)
 app.register_blueprint(detection_model_settings_bp)
 
 @app.route('/')
@@ -60,22 +97,39 @@ def cleanup_threads():
                 logger.warning(f"Warning: Thread {thread_id} did not stop gracefully")
     
     logger.info("All threads stopped. Exiting...")
+    
+    # Stop health monitoring
+    health_service.stop_all()
+    
+    # Stop logger
     logger.stop()
 
 def signal_handler(sig, frame):
     """Handle Ctrl-C signal"""
+    print("\n\nReceived interrupt signal, shutting down...")
     cleanup_threads()
     sys.exit(0)
 
+# Register signal handler for Ctrl-C BEFORE starting Flask
+signal.signal(signal.SIGINT, signal_handler)
+
 # Register cleanup on exit
-atexit.register(lambda: logger.stop())
+def cleanup_on_exit():
+    try:
+        health_service.stop_all()
+        logger.stop()
+    except:
+        pass
+
+atexit.register(cleanup_on_exit)
 
 if __name__ == '__main__':
-    # Register signal handler for Ctrl-C
-    signal.signal(signal.SIGINT, signal_handler)
-    
     try:
-        app.run(host='0.0.0.0', port=5000, threaded=True)
-    except KeyboardInterrupt:
+        # Don't use Flask's threaded mode, it interferes with signal handling
+        # use_reloader=False prevents the app from starting twice
+        app.run(host='0.0.0.0', port=5000, threaded=True, use_reloader=False)
+    except (KeyboardInterrupt, SystemExit):
+        print("\nShutdown initiated...")
         cleanup_threads()
-        sys.exit(0)
+    finally:
+        print("Application stopped.")
