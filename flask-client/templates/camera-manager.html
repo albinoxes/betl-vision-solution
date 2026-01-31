@@ -45,7 +45,7 @@
             // Fetch devices with timeout
             console.log('Fetching connected devices...');
             const controller1 = new AbortController();
-            const timeout1 = setTimeout(() => controller1.abort(), 15000); // 15 second timeout
+            const timeout1 = setTimeout(() => controller1.abort(), 5000); // 5 second timeout
             
             const response = await fetch('/connected-devices', { signal: controller1.signal });
             clearTimeout(timeout1);
@@ -61,7 +61,7 @@
             // Get active threads with timeout
             console.log('Fetching active threads...');
             const controller2 = new AbortController();
-            const timeout2 = setTimeout(() => controller2.abort(), 15000);
+            const timeout2 = setTimeout(() => controller2.abort(), 5000);
             
             const threadsResponse = await fetch('/active-threads', { signal: controller2.signal });
             clearTimeout(timeout2);
@@ -208,9 +208,6 @@
         
         // Initial load
         loadDevices();
-        
-        // Refresh devices and thread states every 10 seconds
-        setInterval(loadDevices, 10000);
     };
 
     async function toggleThread(type, id, btn) {
