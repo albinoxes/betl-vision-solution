@@ -96,6 +96,10 @@ def process_video_stream_background(thread_id, url, model_id=None, classifier_id
         if thread_id in active_threads:
             active_threads[thread_id]['session'] = session
     
+    print(f"[Thread {thread_id}] Starting stream processing")
+    print(f"[Thread {thread_id}] URL: {url}")
+    print(f"[Thread {thread_id}] Model ID: {model_id}, Classifier ID: {classifier_id}, Settings ID: {settings_id}")
+    
     try:
         while True:
             # Check if thread should stop
@@ -105,8 +109,10 @@ def process_video_stream_background(thread_id, url, model_id=None, classifier_id
             
             try:
                 # Use timeout only for connection, not for reading stream (None for read timeout)
+                print(f"[Thread {thread_id}] Connecting to video stream...")
                 current_request = session.get(url, stream=True, timeout=(5, None))
                 r = current_request
+                print(f"[Thread {thread_id}] Connected successfully, starting frame processing")
                 boundary = b'--frame'
                 buffer = b''
                 
@@ -147,6 +153,10 @@ def process_video_stream_background(thread_id, url, model_id=None, classifier_id
                             img2d = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
                             
                             if img2d is not None:
+                                # Log frame reception (only once every 100 frames to avoid spam)
+                                if frame_count % 100 == 0:
+                                    print(f"[Thread {thread_id}] Processed {frame_count} frames")
+                                
                                 # Save frame to storage directory and database at the same interval as processing
                                 current_time = time.time()
                                 if current_time - last_frame_save_time >= processing_interval:
@@ -178,15 +188,23 @@ def process_video_stream_background(thread_id, url, model_id=None, classifier_id
                                 if model_id and not model_loaded:
                                     from computer_vision.ml_model_image_processor import get_model_from_database, get_camera_settings
                                     try:
-                                        print(f"[Model] Lazy-loading model: {model_id}")
+                                        print(f"[Model] Lazy-loading model: {model_id}, settings: {settings_id}")
                                         model = get_model_from_database(model_id)
                                         settings = get_camera_settings(settings_id)
                                         model_loaded = True
-                                        print(f"[Model] Model loaded successfully")
+                                        print(f"[Model] Model loaded successfully: {model}")
+                                        print(f"[Model] Settings loaded: {settings}")
                                     except Exception as e:
-                                        print(f"Error loading model or settings: {e}")
+                                        print(f"[Model] Error loading model or settings: {e}")
+                                        import traceback
+                                        traceback.print_exc()
                                         model = None
                                         settings = None
+                                elif model_id and model_loaded:
+                                    pass  # Model already loaded
+                                else:
+                                    if not model_id:
+                                        print(f"[Model] No model_id provided, skipping model processing")
                                 
                                 # Process with ML models if specified
                                 if model is not None:
@@ -200,11 +218,15 @@ def process_video_stream_background(thread_id, url, model_id=None, classifier_id
                                             result = object_process_image(img2d.copy(), model=model, settings=settings)
                                             frame_count += 1
                                             
+                                            # result format: [image, xyxy, particles_to_detect, particles_to_save]
+                                            # Use particles_to_detect (index 2) for CSV/reporting
+                                            result_for_csv = [result[0], result[1], result[2]]
+                                            
                                             # Generate IRIS input CSV for result with processing timestamp
                                             csv_path = iris_input_processor.generate_iris_input_data(
                                                 project_settings=project_settings,
                                                 timestamp=processing_timestamp,
-                                                data=result,
+                                                data=result_for_csv,
                                                 folder_type='model',
                                                 image_filename=filename
                                             )
@@ -296,15 +318,27 @@ def process_video_stream_background(thread_id, url, model_id=None, classifier_id
                 
             except requests.exceptions.Timeout as e:
                 # Timeout error - don't retry, just stop
-                print(f"Timeout in thread {thread_id}: {e}")
+                print(f"[Error] Timeout in thread {thread_id}: {e}")
+                with thread_lock:
+                    if thread_id in active_threads:
+                        active_threads[thread_id]['status'] = 'error: timeout'
+                break
+                
+            except requests.exceptions.ConnectionError as e:
+                # Connection error - server might be down
+                print(f"[Error] Connection error in thread {thread_id}: Server unreachable or not running")
+                with thread_lock:
+                    if thread_id in active_threads:
+                        active_threads[thread_id]['status'] = 'error: server unreachable'
                 break
                 
             except Exception as e:
-                print(f"Error in thread {thread_id}: {e}")
+                print(f"[Error] Unexpected error in thread {thread_id}: {e}")
                 # Check if thread should stop before retrying
                 with thread_lock:
                     if thread_id not in active_threads or not active_threads[thread_id]['running']:
                         break
+                    active_threads[thread_id]['status'] = f'error: {str(e)[:50]}'
                 # Don't retry on errors - just stop the thread
                 break
     finally:
@@ -402,11 +436,11 @@ def process_video_stream(url, model_id=None, classifier_id=None, settings_id=Non
                         try:
                             result = object_process_image(img2d.copy(), model=model, settings=settings)
                             # Annotate image with detection results
-                            # result format: [image, xyxy, particles]
-                            particles = result[2]
+                            # result format: [image, xyxy, particles_to_detect, particles_to_save]
+                            particles_to_detect = result[2]
                             for i, box in enumerate(result[1]):
                                 cv2.rectangle(img2d, (int(box[0]), int(box[1])), (int(box[2]), int(box[3])), (255, 0, 0), 2)
-                                cv2.putText(img2d, f'{particles[i].max_d_mm}mm', (int(box[0]), int(box[1]-10)), 
+                                cv2.putText(img2d, f'{particles_to_detect[i].max_d_mm}mm', (int(box[0]), int(box[1]-10)), 
                                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 1)
                         except Exception as e:
                             print(f"Error processing with model: {e}")
@@ -538,10 +572,17 @@ def connected_devices():
 def camera_manager():
     from sqlite.ml_sqlite_provider import ml_provider
     from sqlite.camera_settings_sqlite_provider import camera_settings_provider
+    from flask import make_response
     models = ml_provider.list_models()
     classifiers = ml_provider.list_classifiers()
     settings = camera_settings_provider.list_settings()
-    return render_template('camera-manager.html', models=models, classifiers=classifiers, settings=settings)
+    
+    response = make_response(render_template('camera-manager.html', models=models, classifiers=classifiers, settings=settings))
+    # Prevent caching to ensure fresh data on reload
+    response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    response.headers['Pragma'] = 'no-cache'
+    response.headers['Expires'] = '0'
+    return response
 
 @camera_bp.route('/add-camera-settings', methods=['POST'])
 def add_camera_settings():
@@ -556,6 +597,8 @@ def add_camera_settings():
     min_conf = float(request.form.get('min_conf', 0.8))
     min_d_detect = int(request.form.get('min_d_detect', 200))
     min_d_save = int(request.form.get('min_d_save', 200))
+    max_d_detect = int(request.form.get('max_d_detect', 10000))
+    max_d_save = int(request.form.get('max_d_save', 10000))
     particle_bb_dimension_factor = float(request.form.get('particle_bb_dimension_factor', 0.9))
     est_particle_volume_x = float(request.form.get('est_particle_volume_x', 8.357470139e-11))
     est_particle_volume_exp = float(request.form.get('est_particle_volume_exp', 3.02511466443))
@@ -564,7 +607,9 @@ def add_camera_settings():
         name, 
         min_conf, 
         min_d_detect, 
-        min_d_save, 
+        min_d_save,
+        max_d_detect,
+        max_d_save,
         particle_bb_dimension_factor, 
         est_particle_volume_x, 
         est_particle_volume_exp
@@ -580,6 +625,8 @@ def update_camera_settings(setting_name):
         ('min_conf', float),
         ('min_d_detect', int),
         ('min_d_save', int),
+        ('max_d_detect', int),
+        ('max_d_save', int),
         ('particle_bb_dimension_factor', float),
         ('est_particle_volume_x', float),
         ('est_particle_volume_exp', float)
@@ -592,7 +639,9 @@ def update_camera_settings(setting_name):
             updates[field_name] = field_type(value)
 
     camera_settings_provider.update_settings(setting_name, **updates)
-    return redirect(url_for('camera.camera_manager'))
+    # Add timestamp to force cache refresh
+    import time
+    return redirect(url_for('camera.camera_manager') + f'?t={int(time.time())}')
 
 @camera_bp.route('/delete-camera-settings/<setting_name>', methods=['POST'])
 def delete_camera_settings(setting_name):
@@ -609,6 +658,22 @@ def start_thread():
     classifier_id = data.get('classifier')
     settings_id = data.get('settings')
     
+    print(f"[Start Thread] Request received:")
+    print(f"  Device: {device_type}_{device_id}")
+    print(f"  Model ID: '{model_id}' (type: {type(model_id).__name__})")
+    print(f"  Classifier ID: '{classifier_id}' (type: {type(classifier_id).__name__})")
+    print(f"  Settings ID: '{settings_id}' (type: {type(settings_id).__name__})")
+    
+    # Convert empty strings to None
+    if model_id == '':
+        model_id = None
+    if classifier_id == '':
+        classifier_id = None
+    if settings_id == '':
+        settings_id = None
+    
+    print(f"[Start Thread] After conversion: model={model_id}, classifier={classifier_id}, settings={settings_id}")
+    
     # Create unique thread ID
     thread_id = f"{device_type}_{device_id}"
     
@@ -620,10 +685,25 @@ def start_thread():
     # Determine URL based on device type
     if device_type == 'legacy':
         url = f"http://localhost:5002/camera-video/{device_id}"
+        server_check_url = "http://localhost:5002/devices"
     elif device_type == 'simulator':
         url = "http://localhost:5003/video/simulator"
+        server_check_url = "http://localhost:5003/devices"
     else:  # webcam
         url = "http://localhost:5001/video"
+        server_check_url = "http://localhost:5001/devices"
+    
+    # Check if the server is reachable before starting thread
+    try:
+        check_response = requests.get(server_check_url, timeout=2)
+        if check_response.status_code != 200:
+            return jsonify({'error': f'{device_type.capitalize()} server is not responding properly (status {check_response.status_code})'}), 503
+    except requests.exceptions.ConnectionError:
+        return jsonify({'error': f'{device_type.capitalize()} server on {server_check_url} is not running or unreachable'}), 503
+    except requests.exceptions.Timeout:
+        return jsonify({'error': f'{device_type.capitalize()} server is not responding (timeout)'}), 503
+    except Exception as e:
+        return jsonify({'error': f'Cannot connect to {device_type} server: {str(e)}'}), 503
     
     # Create and start thread
     thread = threading.Thread(
