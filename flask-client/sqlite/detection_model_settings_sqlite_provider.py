@@ -3,12 +3,12 @@ from datetime import datetime
 from typing import Optional, Tuple, List
 
 
-class CameraSettingsSQLiteProvider:
+class DetectionModelSettingsSQLiteProvider:
     """
-    SQLite provider for storing and retrieving camera settings for boulder detection.
+    SQLite provider for storing and retrieving detection model settings for boulder detection.
     """
 
-    def __init__(self, db_path: str = 'camera_settings.db'):
+    def __init__(self, db_path: str = 'detection_model_settings.db'):
         self.db_path = db_path
         self._init_db()
 
@@ -16,7 +16,7 @@ class CameraSettingsSQLiteProvider:
         with sqlite3.connect(self.db_path) as conn:
             # Create table with new columns
             conn.execute('''
-                CREATE TABLE IF NOT EXISTS camera_settings (
+                CREATE TABLE IF NOT EXISTS detection_model_settings (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     name TEXT NOT NULL UNIQUE,
                     min_conf REAL NOT NULL DEFAULT 0.8,
@@ -34,22 +34,22 @@ class CameraSettingsSQLiteProvider:
             
             # Add new columns to existing table if they don't exist (migration)
             cursor = conn.cursor()
-            cursor.execute("PRAGMA table_info(camera_settings)")
+            cursor.execute("PRAGMA table_info(detection_model_settings)")
             columns = [column[1] for column in cursor.fetchall()]
             
             if 'max_d_detect' not in columns:
-                conn.execute('ALTER TABLE camera_settings ADD COLUMN max_d_detect INTEGER NOT NULL DEFAULT 10000')
+                conn.execute('ALTER TABLE detection_model_settings ADD COLUMN max_d_detect INTEGER NOT NULL DEFAULT 10000')
                 print("[Migration] Added max_d_detect column")
             
             if 'max_d_save' not in columns:
-                conn.execute('ALTER TABLE camera_settings ADD COLUMN max_d_save INTEGER NOT NULL DEFAULT 10000')
+                conn.execute('ALTER TABLE detection_model_settings ADD COLUMN max_d_save INTEGER NOT NULL DEFAULT 10000')
                 print("[Migration] Added max_d_save column")
             
             # Insert default settings if not exists
-            cursor.execute('SELECT COUNT(*) FROM camera_settings WHERE name = ?', ('default',))
+            cursor.execute('SELECT COUNT(*) FROM detection_model_settings WHERE name = ?', ('default',))
             if cursor.fetchone()[0] == 0:
                 cursor.execute('''
-                    INSERT INTO camera_settings (name, min_conf, min_d_detect, min_d_save, max_d_detect, max_d_save, particle_bb_dimension_factor, est_particle_volume_x, est_particle_volume_exp)
+                    INSERT INTO detection_model_settings (name, min_conf, min_d_detect, min_d_save, max_d_detect, max_d_save, particle_bb_dimension_factor, est_particle_volume_x, est_particle_volume_exp)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ''', ('default', 0.8, 200, 200, 10000, 10000, 0.9, 8.357470139e-11, 3.02511466443))
             conn.commit()
@@ -60,7 +60,7 @@ class CameraSettingsSQLiteProvider:
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute('''
-                INSERT INTO camera_settings (name, min_conf, min_d_detect, min_d_save, max_d_detect, max_d_save, particle_bb_dimension_factor, est_particle_volume_x, est_particle_volume_exp)
+                INSERT INTO detection_model_settings (name, min_conf, min_d_detect, min_d_save, max_d_detect, max_d_save, particle_bb_dimension_factor, est_particle_volume_x, est_particle_volume_exp)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (name, min_conf, min_d_detect, min_d_save, max_d_detect, max_d_save, particle_bb_dimension_factor, est_particle_volume_x, est_particle_volume_exp))
             conn.commit()
@@ -71,7 +71,7 @@ class CameraSettingsSQLiteProvider:
             cursor = conn.cursor()
             cursor.execute('''
                 SELECT id, name, min_conf, min_d_detect, min_d_save, max_d_detect, max_d_save, particle_bb_dimension_factor, est_particle_volume_x, est_particle_volume_exp, created_at, updated_at
-                FROM camera_settings
+                FROM detection_model_settings
                 WHERE name = ?
             ''', (name,))
             row = cursor.fetchone()
@@ -86,7 +86,7 @@ class CameraSettingsSQLiteProvider:
             cursor = conn.cursor()
             cursor.execute('''
                 SELECT id, name, min_conf, min_d_detect, min_d_save, max_d_detect, max_d_save, particle_bb_dimension_factor, est_particle_volume_x, est_particle_volume_exp, created_at, updated_at
-                FROM camera_settings
+                FROM detection_model_settings
                 ORDER BY name
             ''')
             return cursor.fetchall()
@@ -125,7 +125,7 @@ class CameraSettingsSQLiteProvider:
             if not updates:
                 return False
             updates.append('updated_at = CURRENT_TIMESTAMP')
-            query = f'UPDATE camera_settings SET {", ".join(updates)} WHERE name = ?'
+            query = f'UPDATE detection_model_settings SET {", ".join(updates)} WHERE name = ?'
             params.append(name)
             cursor.execute(query, params)
             conn.commit()
@@ -134,7 +134,7 @@ class CameraSettingsSQLiteProvider:
     def delete_settings(self, name: str) -> bool:
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
-            cursor.execute('DELETE FROM camera_settings WHERE name = ?', (name,))
+            cursor.execute('DELETE FROM detection_model_settings WHERE name = ?', (name,))
             conn.commit()
             return cursor.rowcount > 0
 
@@ -143,4 +143,4 @@ class CameraSettingsSQLiteProvider:
 
 
 # Convenience instance for global use
-camera_settings_provider = CameraSettingsSQLiteProvider()
+detection_model_settings_provider = DetectionModelSettingsSQLiteProvider()

@@ -45,10 +45,10 @@ def process_video_stream_background(thread_id, url, model_id=None, classifier_id
     model_loaded = False
     
     # Load camera settings before the loop starts
-    from sqlite.camera_settings_sqlite_provider import camera_settings_provider
+    from sqlite.detection_model_settings_sqlite_provider import detection_model_settings_provider
     if not settings_id:
         # Get the first camera settings from the database
-        all_settings = camera_settings_provider.list_settings()
+        all_settings = detection_model_settings_provider.list_settings()
         if all_settings and len(all_settings) > 0:
             settings_id = all_settings[0][1]  # Get the name from the first setting
             print(f"[Thread {thread_id}] No settings specified, using first available: {settings_id}")

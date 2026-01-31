@@ -1,5 +1,5 @@
 import cv2
-from sqlite.camera_settings_sqlite_provider import camera_settings_provider
+from sqlite.detection_model_settings_sqlite_provider import detection_model_settings_provider
 from sqlite.ml_sqlite_provider import ml_provider
 
 
@@ -74,10 +74,10 @@ def get_camera_settings(settings_id=None):
     settings = None
     if settings_id is not None:
         # Get by name or id - assuming name is used as identifier
-        settings = camera_settings_provider.get_settings(settings_id)
+        settings = detection_model_settings_provider.get_settings(settings_id)
     else:
         # Get first available settings
-        all_settings = camera_settings_provider.list_settings()
+        all_settings = detection_model_settings_provider.list_settings()
         if all_settings:
             settings = all_settings[0]
     
