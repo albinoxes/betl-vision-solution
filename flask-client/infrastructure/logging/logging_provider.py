@@ -1,15 +1,15 @@
+import logging
 import threading
-import queue
-import os
 import inspect
 from datetime import datetime
 from pathlib import Path
+from logging.handlers import RotatingFileHandler
 
 
 class LoggingProvider:
     """
-    Singleton logging provider that writes logs to a text file in a separate thread.
-    A new log file is created each time the application starts with the format: logs_{creation_date}.txt
+    Singleton logging provider using Python's logging library.
+    Creates rotating log files with custom formatting.
     """
     _instance = None
     _lock = threading.Lock()
@@ -27,11 +27,6 @@ class LoggingProvider:
             return
         
         self._initialized = True
-        self._queue = queue.Queue()
-        self._running = False
-        self._worker_thread = None
-        self._log_file_path = None
-        self._file_handle = None
         
         # Create logs directory if it doesn't exist
         self._logs_dir = Path(__file__).parent.parent.parent / 'logs'
@@ -41,130 +36,99 @@ class LoggingProvider:
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         self._log_file_path = self._logs_dir / f'logs_{timestamp}.txt'
         
+        # Create logger
+        self._logger = logging.getLogger('BeltVisionApp')
+        self._logger.setLevel(logging.DEBUG)
+        
+        # Prevent duplicate handlers
+        if self._logger.handlers:
+            self._logger.handlers.clear()
+        
+        # Create rotating file handler (10MB max, keep 5 backup files)
+        file_handler = RotatingFileHandler(
+            self._log_file_path,
+            maxBytes=10*1024*1024,  # 10 MB
+            backupCount=5,
+            encoding='utf-8'
+        )
+        file_handler.setLevel(logging.DEBUG)
+        
+        # Create custom formatter
+        formatter = CustomFormatter()
+        file_handler.setFormatter(formatter)
+        
+        # Add handler to logger
+        self._logger.addHandler(file_handler)
+        
     def start(self):
-        """Start the logging worker thread."""
-        if self._running:
-            return
-        
-        self._running = True
-        self._file_handle = open(self._log_file_path, 'a', encoding='utf-8')
-        self._worker_thread = threading.Thread(target=self._worker, daemon=True)
-        self._worker_thread.start()
-        
-        # Log the initialization
-        self.log(f"Logging started - Log file: {self._log_file_path}")
-    
-    def _worker(self):
-        """Worker thread that processes log messages from the queue."""
-        while self._running:
-            try:
-                # Wait for log message with timeout to allow checking _running flag
-                log_data = self._queue.get(timeout=1)
-                if log_data is None:  # Sentinel value to stop
-                    break
-                
-                # Unpack log data: (message, thread_name, module_name, function_name)
-                message, thread_name, module_name, function_name = log_data
-                
-                # Write to file with timestamp and context
-                timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
-                log_entry = f"[{timestamp}] [{thread_name}] [{module_name}.{function_name}] {message}\n"
-                self._file_handle.write(log_entry)
-                self._file_handle.flush()
-                
-                self._queue.task_done()
-            except queue.Empty:
-                continue
-            except Exception as e:
-                # Fallback to console if logging fails
-                print(f"Logging error: {e}")
-    
-    def _get_caller_info(self):
-        """
-        Get information about the calling function (module, function name).
-        Skips internal logging methods to get the actual caller.
-        """
-        # Get the call stack
-        stack = inspect.stack()
-        
-        # Find the first frame outside of logging_provider module
-        # Skip frames until we find one that's not in this file
-        caller_frame = None
-        for frame_info in stack[1:]:  # Skip current function
-            frame_module = Path(frame_info.filename).stem
-            if frame_module != 'logging_provider':
-                caller_frame = frame_info
-                break
-        
-        # If we didn't find an external caller, use the last frame
-        if caller_frame is None:
-            caller_frame = stack[-1]
-        
-        # Get module name (controller, processor, etc.)
-        module_path = caller_frame.filename
-        module_name = Path(module_path).stem  # Get filename without extension
-        
-        # Get function name
-        function_name = caller_frame.function
-        
-        return module_name, function_name
+        """Start the logging (for compatibility with old interface)."""
+        self._logger.info(f"Logging started - Log file: {self._log_file_path}")
     
     def log(self, message):
         """
-        Add a log message to the queue.
+        Add a log message without a specific level.
         
         Args:
-            message: The message to log (can be any type, will be converted to string)
+            message: The message to log
         """
-        if not self._running:
-            # If not started yet, just print to console
-            print(message)
-            return
-        
-        # Get thread name and caller information
-        thread_name = threading.current_thread().name
-        module_name, function_name = self._get_caller_info()
-        
-        # Put log data as tuple: (message, thread_name, module_name, function_name)
-        self._queue.put((str(message), thread_name, module_name, function_name))
+        self._logger.info(message)
     
     def info(self, message):
         """Log an info message."""
-        self.log(f"INFO: {message}")
+        self._logger.info(message)
     
     def error(self, message):
         """Log an error message."""
-        self.log(f"ERROR: {message}")
+        self._logger.error(message)
     
     def warning(self, message):
         """Log a warning message."""
-        self.log(f"WARNING: {message}")
+        self._logger.warning(message)
     
     def debug(self, message):
         """Log a debug message."""
-        self.log(f"DEBUG: {message}")
+        self._logger.debug(message)
     
     def stop(self):
-        """Stop the logging worker thread and close the file."""
-        if not self._running:
-            return
-        
-        self.log("Logging stopped")
-        self._running = False
-        self._queue.put(None)  # Sentinel value
-        
-        if self._worker_thread:
-            self._worker_thread.join(timeout=5)
-        
-        if self._file_handle:
-            self._file_handle.close()
+        """Stop the logging and flush handlers."""
+        self._logger.info("Logging stopped")
+        for handler in self._logger.handlers:
+            handler.flush()
+            handler.close()
+
+
+class CustomFormatter(logging.Formatter):
+    """
+    Custom formatter that outputs logs in the format:
+    [YYYY-MM-DD HH:MM:SS] [LEVEL] [ThreadName] [module.function] message
+    """
     
-    def __del__(self):
-        """Ensure cleanup when object is destroyed."""
-        self.stop()
+    def format(self, record):
+        # Get timestamp
+        timestamp = datetime.fromtimestamp(record.created).strftime('%Y-%m-%d %H:%M:%S')
+        
+        # Get level
+        level = record.levelname
+        
+        # Get thread name
+        thread_name = record.threadName
+        
+        # Get caller information (module.function)
+        module_name = Path(record.pathname).stem
+        function_name = record.funcName
+        
+        # Build log entry
+        log_entry = f"[{timestamp}] [{level}] [{thread_name}] [{module_name}.{function_name}] {record.getMessage()}"
+        
+        # Add exception info if present
+        if record.exc_info:
+            log_entry += '\n' + self.formatException(record.exc_info)
+        
+        return log_entry
 
 
 # Convenience function to get the singleton instance
 def get_logger():
     """Get the singleton LoggingProvider instance."""
     return LoggingProvider()
+
