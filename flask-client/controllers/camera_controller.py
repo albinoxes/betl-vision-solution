@@ -13,18 +13,17 @@ from iris_communication.iris_input_processor import iris_input_processor
 from iris_communication.sftp_processor import sftp_processor
 from sqlite.sftp_sqlite_provider import sftp_provider
 from infrastructure.logging.logging_provider import get_logger
+from infrastructure.thread_manager import get_thread_manager
+import atexit
 
-# Initialize logger
+# Initialize logger and thread manager
 logger = get_logger()
+thread_manager = get_thread_manager()
 
 CAMERA_URL = "http://localhost:5001/video"
 
 # Processing interval in seconds - controls how often frames are processed with ML models
 PROCESSING_INTERVAL_SECONDS = 1.0  # Process every 1 second
-
-# Global dictionary to track active video processing threads
-active_threads = {}
-thread_lock = threading.Lock()
 
 def generate_frames():
     r = requests.get(CAMERA_URL, stream=True)
@@ -97,10 +96,9 @@ def process_video_stream_background(thread_id, url, model_id=None, classifier_id
     except Exception as e:
         logger.error(f"[SFTP] Error loading SFTP server info: {e}")
     
-    with thread_lock:
-        if thread_id in active_threads:
-            active_threads[thread_id]['status'] = 'running'
-            active_threads[thread_id]['frame_count'] = 0
+    # Update thread status to running
+    thread_manager.set_status(thread_id, 'running')
+    thread_manager.update_metadata(thread_id, {'frame_count': 0})
     
     # Don't use a persistent session to avoid socket issues on Windows
     # Create new connection for each request cycle
@@ -113,9 +111,8 @@ def process_video_stream_background(thread_id, url, model_id=None, classifier_id
     try:
         while True:
             # Check if thread should stop
-            with thread_lock:
-                if thread_id not in active_threads or not active_threads[thread_id]['running']:
-                    break
+            if not thread_manager.is_running(thread_id):
+                break
             
             try:
                 # Use timeout only for connection, not for reading stream (None for read timeout)
@@ -134,10 +131,9 @@ def process_video_stream_background(thread_id, url, model_id=None, classifier_id
                     
                     # Check stop flag every 10 chunks (not on every chunk for performance)
                     if chunk_count % 10 == 0:
-                        with thread_lock:
-                            if thread_id not in active_threads or not active_threads[thread_id]['running']:
-                                r.close()
-                                break
+                        if not thread_manager.is_running(thread_id):
+                            r.close()
+                            break
                     
                     buffer += chunk
                     while boundary in buffer:
@@ -312,10 +308,10 @@ def process_video_stream_background(thread_id, url, model_id=None, classifier_id
                                             logger.error(f"Error processing with classifier: {e}")
                                 
                                 # Update frame count
-                                with thread_lock:
-                                    if thread_id in active_threads:
-                                        active_threads[thread_id]['frame_count'] = frame_count
-                                        active_threads[thread_id]['last_update'] = time.time()
+                                thread_manager.update_metadata(thread_id, {
+                                    'frame_count': frame_count,
+                                    'last_update': time.time()
+                                })
                 
                 # Close the response properly
                 if current_request:
@@ -328,26 +324,21 @@ def process_video_stream_background(thread_id, url, model_id=None, classifier_id
             except requests.exceptions.Timeout as e:
                 # Timeout error - don't retry, just stop
                 logger.error(f"[Error] Timeout in thread {thread_id}: {e}")
-                with thread_lock:
-                    if thread_id in active_threads:
-                        active_threads[thread_id]['status'] = 'error: timeout'
+                thread_manager.set_status(thread_id, 'error: timeout')
                 break
                 
             except requests.exceptions.ConnectionError as e:
                 # Connection error - server might be down
                 logger.error(f"[Error] Connection error in thread {thread_id}: Server unreachable or not running")
-                with thread_lock:
-                    if thread_id in active_threads:
-                        active_threads[thread_id]['status'] = 'error: server unreachable'
+                thread_manager.set_status(thread_id, 'error: server unreachable')
                 break
                 
             except Exception as e:
                 logger.error(f"[Error] Unexpected error in thread {thread_id}: {e}")
                 # Check if thread should stop before retrying
-                with thread_lock:
-                    if thread_id not in active_threads or not active_threads[thread_id]['running']:
-                        break
-                    active_threads[thread_id]['status'] = f'error: {str(e)[:50]}'
+                if not thread_manager.is_running(thread_id):
+                    break
+                thread_manager.set_status(thread_id, f'error: {str(e)[:50]}')
                 # Don't retry on errors - just stop the thread
                 break
     finally:
@@ -379,11 +370,6 @@ def process_video_stream_background(thread_id, url, model_id=None, classifier_id
                     current_request.raw.close()
             except Exception as e:
                 logger.error(f"[Cleanup] Error closing request: {e}")
-            
-        with thread_lock:
-            if thread_id in active_threads:
-                active_threads[thread_id]['status'] = 'stopped'
-                active_threads[thread_id]['running'] = False
 
 def process_video_stream(url, model_id=None, classifier_id=None, settings_id=None):
     """
@@ -482,6 +468,14 @@ def process_video_stream(url, model_id=None, classifier_id=None, settings_id=Non
                 logger.error(f"Error closing stream connection: {e}")
 
 camera_bp = Blueprint('camera', __name__)
+
+# Register cleanup handler to stop all threads when app closes
+@atexit.register
+def cleanup_threads_on_exit():
+    """Stop all managed threads when the application is closing."""
+    logger.info("[Shutdown] Application closing, stopping all threads...")
+    thread_manager.stop_all_threads(timeout=10.0)
+    logger.info("[Shutdown] All threads stopped successfully")
 
 @camera_bp.route('/video')
 def video():
@@ -662,9 +656,8 @@ def start_thread():
     thread_id = f"{device_type}_{device_id}"
     
     # Check if thread already exists
-    with thread_lock:
-        if thread_id in active_threads and active_threads[thread_id]['running']:
-            return jsonify({'error': 'Thread already running for this device'}), 400
+    if thread_manager.is_running(thread_id):
+        return jsonify({'error': 'Thread already running for this device'}), 400
     
     # Determine URL based on device type
     if device_type == 'legacy':
@@ -689,30 +682,28 @@ def start_thread():
     except Exception as e:
         return jsonify({'error': f'Cannot connect to {device_type} server: {str(e)}'}), 503
     
-    # Create and start thread
-    thread = threading.Thread(
+    # Create metadata for the thread
+    metadata = {
+        'device_type': device_type,
+        'device_id': device_id,
+        'model_id': model_id or 'None',
+        'classifier_id': classifier_id or 'None',
+        'settings_id': settings_id or 'default',
+        'url': url,
+        'frame_count': 0
+    }
+    
+    # Start managed thread
+    success = thread_manager.start_thread(
+        thread_id=thread_id,
         target=process_video_stream_background,
         args=(thread_id, url, model_id, classifier_id, settings_id),
-        daemon=True
+        metadata=metadata
     )
     
-    with thread_lock:
-        active_threads[thread_id] = {
-            'thread': thread,
-            'running': True,
-            'status': 'starting',
-            'device_type': device_type,
-            'device_id': device_id,
-            'model_id': model_id or 'None',
-            'classifier_id': classifier_id or 'None',
-            'settings_id': settings_id or 'default',
-            'url': url,
-            'frame_count': 0,
-            'start_time': time.time(),
-            'last_update': time.time()
-        }
+    if not success:
+        return jsonify({'error': 'Failed to start thread'}), 500
     
-    thread.start()
     return jsonify({'success': True, 'thread_id': thread_id})
 
 @camera_bp.route('/stop-thread', methods=['POST'])
@@ -720,55 +711,37 @@ def stop_thread():
     data = request.get_json()
     thread_id = data.get('thread_id')
     
-    thread_obj = None
+    # Stop the thread using ThreadManager
+    success = thread_manager.stop_thread(thread_id, timeout=5.0)
     
-    with thread_lock:
-        if thread_id not in active_threads:
-            return jsonify({'error': 'Thread not found'}), 404
-        
-        active_threads[thread_id]['running'] = False
-        active_threads[thread_id]['status'] = 'stopping'
-        thread_obj = active_threads[thread_id].get('thread')
-    
-    logger.info(f"[Stop Thread] Stopping thread {thread_id}...")
-    
-    # Wait for thread to actually stop (max 5 seconds)
-    if thread_obj and thread_obj.is_alive():
-        thread_obj.join(timeout=5)
-        if thread_obj.is_alive():
-            logger.warning(f"[Stop Thread] Warning: Thread {thread_id} did not stop gracefully")
-        else:
-            logger.info(f"[Stop Thread] Thread {thread_id} stopped successfully")
-    
-    # Clean up thread from active_threads after stopping
-    with thread_lock:
-        if thread_id in active_threads:
-            active_threads[thread_id]['status'] = 'stopped'
+    if not success:
+        return jsonify({'error': 'Thread not found or failed to stop'}), 404
     
     return jsonify({'success': True})
 
 @camera_bp.route('/active-threads')
 def get_active_threads():
+    # Cleanup old stopped threads
+    thread_manager.cleanup_stopped_threads(max_age=60)
+    
+    # Get all threads from ThreadManager
+    all_threads = thread_manager.get_all_threads()
+    
     threads_info = []
-    with thread_lock:
-        for thread_id, info in list(active_threads.items()):
-            # Remove stopped threads that have been stopped for more than 60 seconds
-            if not info['running'] and time.time() - info.get('last_update', 0) > 60:
-                del active_threads[thread_id]
-                continue
-            
-            threads_info.append({
-                'thread_id': thread_id,
-                'device_type': info['device_type'],
-                'device_id': info['device_id'],
-                'model_id': info['model_id'],
-                'classifier_id': info['classifier_id'],
-                'settings_id': info['settings_id'],
-                'status': info['status'],
-                'running': info['running'],
-                'frame_count': info['frame_count'],
-                'uptime': int(time.time() - info['start_time']),
-            })
+    for thread_id, info in all_threads.items():
+        metadata = info.get('metadata', {})
+        threads_info.append({
+            'thread_id': thread_id,
+            'device_type': metadata.get('device_type', 'unknown'),
+            'device_id': metadata.get('device_id', 'unknown'),
+            'model_id': metadata.get('model_id', 'None'),
+            'classifier_id': metadata.get('classifier_id', 'None'),
+            'settings_id': metadata.get('settings_id', 'default'),
+            'status': info['status'],
+            'running': info['running'],
+            'frame_count': metadata.get('frame_count', 0),
+            'uptime': info['uptime'],
+        })
     
     return jsonify(threads_info)
 
@@ -791,14 +764,14 @@ def get_system_resources():
     # Thread count
     thread_count = process.num_threads()
     
-    # Active processing threads
-    with thread_lock:
-        active_count = sum(1 for t in active_threads.values() if t['running'])
+    # Active processing threads from ThreadManager
+    active_count = thread_manager.get_active_count()
+    total_tracked = thread_manager.get_total_count()
     
     return jsonify({
         'memory_mb': round(memory_mb, 2),
         'cpu_percent': cpu_percent,
         'thread_count': thread_count,
         'active_processing_threads': active_count,
-        'total_threads_tracked': len(active_threads)
+        'total_threads_tracked': total_tracked
     })
