@@ -80,6 +80,7 @@ def index():
 def cleanup_threads():
     """Stop all active threads gracefully"""
     from infrastructure.thread_manager import get_thread_manager
+    from infrastructure.socket_manager import get_socket_manager
     import gc
     
     logger.info("\nShutting down... stopping all active threads")
@@ -88,6 +89,11 @@ def cleanup_threads():
     thread_manager.stop_all_threads(timeout=10.0)  # Increased timeout
     
     logger.info("All threads stopped. Cleaning up resources...")
+    
+    # Close all socket connections
+    socket_manager = get_socket_manager()
+    socket_manager.shutdown()
+    logger.info("All socket connections closed")
     
     # Stop health monitoring
     health_service.stop_all()
