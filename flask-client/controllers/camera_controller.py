@@ -26,9 +26,20 @@ CAMERA_URL = "http://localhost:5001/video"
 PROCESSING_INTERVAL_SECONDS = 1.0  # Process every 1 second
 
 def generate_frames():
-    r = requests.get(CAMERA_URL, stream=True)
-    return Response(r.iter_content(chunk_size=1024),
-                    mimetype='multipart/x-mixed-replace; boundary=frame')
+    """Generator with proper cleanup to prevent memory leaks."""
+    r = None
+    try:
+        r = requests.get(CAMERA_URL, stream=True, timeout=(5, None))
+        for chunk in r.iter_content(chunk_size=1024):
+            yield chunk
+    finally:
+        if r is not None:
+            try:
+                r.close()
+                if hasattr(r, 'raw'):
+                    r.raw.close()
+            except:
+                pass
 
 def process_video_stream_background(thread_id, url, model_id=None, classifier_id=None, settings_id=None):
     """
@@ -123,6 +134,7 @@ def process_video_stream_background(thread_id, url, model_id=None, classifier_id
                 logger.info(f"[Thread {thread_id}] Connected successfully, starting frame processing")
                 boundary = b'--frame'
                 buffer = b''
+                MAX_BUFFER_SIZE = 10 * 1024 * 1024  # 10MB max buffer
                 
                 # Process chunks with periodic stop checks
                 chunk_count = 0
@@ -136,6 +148,12 @@ def process_video_stream_background(thread_id, url, model_id=None, classifier_id
                             break
                     
                     buffer += chunk
+                    
+                    # Prevent buffer from growing unbounded
+                    if len(buffer) > MAX_BUFFER_SIZE:
+                        logger.warning(f"[Thread {thread_id}] Buffer exceeded {MAX_BUFFER_SIZE} bytes, truncating")
+                        buffer = buffer[-MAX_BUFFER_SIZE//2:]
+                    
                     while boundary in buffer:
                         start = buffer.find(boundary)
                         end = buffer.find(boundary, start + 1)
@@ -312,6 +330,10 @@ def process_video_stream_background(thread_id, url, model_id=None, classifier_id
                                     'frame_count': frame_count,
                                     'last_update': time.time()
                                 })
+                                
+                                # Explicitly delete numpy array to free memory
+                                del img2d
+                                del nparr
                 
                 # Close the response properly
                 if current_request:
@@ -360,6 +382,11 @@ def process_video_stream_background(thread_id, url, model_id=None, classifier_id
         except Exception as e:
             logger.error(f"Error ending session: {e}")
         
+        # Force garbage collection to free memory immediately
+        import gc
+        gc.collect()
+        logger.info(f"[Cleanup] Memory freed via garbage collection")
+        
         # Close any open request
         if current_request:
             try:
@@ -398,9 +425,16 @@ def process_video_stream(url, model_id=None, classifier_id=None, settings_id=Non
         r = requests.get(url, stream=True, timeout=(5, None))
         boundary = b'--frame'
         buffer = b''
+        MAX_BUFFER_SIZE = 10 * 1024 * 1024  # 10MB max buffer to prevent memory leak
         
         for chunk in r.iter_content(chunk_size=8192):
             buffer += chunk
+            
+            # Prevent buffer from growing unbounded
+            if len(buffer) > MAX_BUFFER_SIZE:
+                logger.warning(f"Buffer exceeded {MAX_BUFFER_SIZE} bytes, truncating")
+                buffer = buffer[-MAX_BUFFER_SIZE//2:]  # Keep last half
+            
             while boundary in buffer:
                 start = buffer.find(boundary)
                 end = buffer.find(boundary, start + 1)
@@ -449,10 +483,18 @@ def process_video_stream(url, model_id=None, classifier_id=None, settings_id=Non
                         
                         # Re-encode processed image
                         _, encoded_img = cv2.imencode('.jpg', img2d)
-                        yield (b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' + encoded_img.tobytes() + b'\r\n')
+                        frame_bytes = encoded_img.tobytes()
+                        yield (b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
+                        
+                        # Explicitly delete to free memory
+                        del encoded_img
+                        del img2d
+                        del nparr
+                        del frame_bytes
                     else:
                         # If decode failed, pass through original frame
                         yield frame_data + b'\r\n'
+                        del nparr
         
         # Yield any remaining buffer
         if buffer:
@@ -466,6 +508,18 @@ def process_video_stream(url, model_id=None, classifier_id=None, settings_id=Non
                     r.raw.close()
             except Exception as e:
                 logger.error(f"Error closing stream connection: {e}")
+        
+        # Explicitly delete model and settings to free memory
+        if model is not None:
+            try:
+                del model
+                del settings
+            except:
+                pass
+        
+        # Force garbage collection
+        import gc
+        gc.collect()
 
 camera_bp = Blueprint('camera', __name__)
 
@@ -485,7 +539,8 @@ def video():
     
     # If no processing is requested, use simple passthrough
     if not model_param and not classifier_param:
-        return generate_frames()
+        return Response(generate_frames(),
+                       mimetype='multipart/x-mixed-replace; boundary=frame')
     
     # Otherwise use processing pipeline
     return Response(process_video_stream(CAMERA_URL, model_param, classifier_param, settings_param),
@@ -750,6 +805,7 @@ def get_system_resources():
     """Monitor system resource usage for debugging performance issues."""
     import psutil
     import os
+    import gc
     
     # Get process info
     process = psutil.Process(os.getpid())
@@ -768,10 +824,42 @@ def get_system_resources():
     active_count = thread_manager.get_active_count()
     total_tracked = thread_manager.get_total_count()
     
+    # Active sessions in store manager
+    session_count = len(store_data_manager.active_sessions)
+    
+    # Garbage collection stats
+    gc_stats = {
+        'collections': gc.get_count(),
+        'garbage_objects': len(gc.garbage)
+    }
+    
     return jsonify({
         'memory_mb': round(memory_mb, 2),
         'cpu_percent': cpu_percent,
         'thread_count': thread_count,
         'active_processing_threads': active_count,
-        'total_threads_tracked': total_tracked
+        'total_threads_tracked': total_tracked,
+        'active_sessions': session_count,
+        'garbage_collection': gc_stats
+    })
+
+@camera_bp.route('/cleanup-resources', methods=['POST'])
+def cleanup_resources():
+    """Manually trigger resource cleanup."""
+    import gc
+    
+    # Cleanup old threads
+    thread_manager.cleanup_stopped_threads(max_age=30)
+    
+    # Cleanup old sessions
+    store_data_manager.cleanup_old_sessions()
+    
+    # Force garbage collection
+    collected = gc.collect()
+    
+    return jsonify({
+        'success': True,
+        'threads_cleaned': 'stopped threads removed',
+        'sessions_cleaned': 'old sessions removed',
+        'objects_collected': collected
     })

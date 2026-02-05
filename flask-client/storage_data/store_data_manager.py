@@ -38,6 +38,21 @@ class StoreDataManager:
         # Track active recording sessions: {session_key: {'folder_start_time': datetime, 'current_folder': str}}
         self.active_sessions = {}
         self.session_duration_minutes = 15
+        self.max_sessions = 100  # Limit to prevent unbounded growth
+    
+    def cleanup_old_sessions(self):
+        """Remove sessions that are older than the duration limit."""
+        current_time = datetime.now()
+        to_remove = []
+        
+        for session_key, session_info in self.active_sessions.items():
+            elapsed_minutes = (current_time - session_info['folder_start_time']).total_seconds() / 60
+            if elapsed_minutes > self.session_duration_minutes * 2:  # Keep for 2x duration before cleanup
+                to_remove.append(session_key)
+        
+        for key in to_remove:
+            del self.active_sessions[key]
+            logger.debug(f"Cleaned up old session: {key}")
     
     def get_project_title(self) -> str:
         """Get the current project title from database."""
@@ -71,6 +86,10 @@ class StoreDataManager:
         Returns:
             Relative path to the current session folder
         """
+        # Periodically cleanup old sessions to prevent memory leak
+        if len(self.active_sessions) > self.max_sessions:
+            self.cleanup_old_sessions()
+        
         if project_title is None:
             project_title = self.get_project_title()
         
