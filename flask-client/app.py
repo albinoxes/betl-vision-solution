@@ -79,35 +79,12 @@ def index():
 
 def cleanup_threads():
     """Stop all active threads gracefully"""
-    from controllers.camera_controller import active_threads, thread_lock
+    from infrastructure.thread_manager import get_thread_manager
     
     logger.info("\nShutting down... stopping all active threads")
     
-    with thread_lock:
-        thread_ids = list(active_threads.keys())
-    
-    for thread_id in thread_ids:
-        logger.info(f"Stopping thread: {thread_id}")
-        
-        with thread_lock:
-            if thread_id in active_threads:
-                active_threads[thread_id]['running'] = False
-                active_threads[thread_id]['status'] = 'stopping'
-                session_obj = active_threads[thread_id].get('session')
-                thread_obj = active_threads[thread_id].get('thread')
-        
-        # Close session to interrupt blocking reads
-        if session_obj:
-            try:
-                session_obj.close()
-            except Exception as e:
-                logger.error(f"Error closing session for {thread_id}: {e}")
-        
-        # Wait for thread to stop
-        if thread_obj and thread_obj.is_alive():
-            thread_obj.join(timeout=2)
-            if thread_obj.is_alive():
-                logger.warning(f"Warning: Thread {thread_id} did not stop gracefully")
+    thread_manager = get_thread_manager()
+    thread_manager.stop_all_threads(timeout=5.0)
     
     logger.info("All threads stopped. Exiting...")
     
