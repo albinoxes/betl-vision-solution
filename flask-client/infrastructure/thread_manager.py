@@ -144,12 +144,13 @@ class ThreadManager:
                 logger.warning(f"[ThreadManager] Thread {thread_id} not found")
                 return False
             
-            # Signal the thread to stop
+            # Immediately signal the thread to stop
             self._threads[thread_id]['running'] = False
             self._threads[thread_id]['status'] = 'stopping'
             thread_obj = self._threads[thread_id].get('thread')
         
         logger.info(f"[ThreadManager] Stopping thread {thread_id}...")
+        logger.info(f"[ThreadManager] Running flag set to False immediately")
         
         # Wait for thread to stop
         if thread_obj and thread_obj.is_alive():
@@ -177,12 +178,35 @@ class ThreadManager:
         """
         thread_ids = []
         with self._lock:
+            # First, set ALL threads to not running immediately
+            for thread_id in self._threads:
+                self._threads[thread_id]['running'] = False
+                self._threads[thread_id]['status'] = 'stopping'
             thread_ids = list(self._threads.keys())
         
         logger.info(f"[ThreadManager] Stopping all {len(thread_ids)} threads...")
+        logger.info(f"[ThreadManager] All running flags set to False")
         
+        # Now wait for each thread
         for thread_id in thread_ids:
-            self.stop_thread(thread_id, timeout)
+            thread_obj = None
+            with self._lock:
+                if thread_id in self._threads:
+                    thread_obj = self._threads[thread_id].get('thread')
+            
+            if thread_obj and thread_obj.is_alive():
+                logger.info(f"[ThreadManager] Waiting for thread {thread_id} to stop...")
+                thread_obj.join(timeout=timeout / len(thread_ids))  # Distribute timeout
+                if thread_obj.is_alive():
+                    logger.warning(f"[ThreadManager] Thread {thread_id} did not stop within timeout")
+                else:
+                    logger.info(f"[ThreadManager] Thread {thread_id} stopped")
+            
+            # Update status
+            with self._lock:
+                if thread_id in self._threads:
+                    self._threads[thread_id]['status'] = 'stopped'
+                    self._threads[thread_id]['last_update'] = time.time()
     
     def is_running(self, thread_id: str) -> bool:
         """

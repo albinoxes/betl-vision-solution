@@ -123,13 +123,15 @@ def process_video_stream_background(thread_id, url, model_id=None, classifier_id
         while True:
             # Check if thread should stop
             if not thread_manager.is_running(thread_id):
+                logger.info(f"[Thread {thread_id}] Stop signal received, exiting")
                 break
             
             try:
-                # Use timeout only for connection, not for reading stream (None for read timeout)
+                # Use timeout for both connection AND reading to prevent hanging
                 logger.info(f"[Thread {thread_id}] Connecting to video stream...")
                 # Don't reuse connections - create fresh request each time
-                current_request = requests.get(url, stream=True, timeout=(5, None))
+                # Use read timeout of 10 seconds to prevent hanging on Ctrl+C
+                current_request = requests.get(url, stream=True, timeout=(5, 10))
                 r = current_request
                 logger.info(f"[Thread {thread_id}] Connected successfully, starting frame processing")
                 boundary = b'--frame'
@@ -141,10 +143,16 @@ def process_video_stream_background(thread_id, url, model_id=None, classifier_id
                 for chunk in r.iter_content(chunk_size=8192):
                     chunk_count += 1
                     
-                    # Check stop flag every 10 chunks (not on every chunk for performance)
-                    if chunk_count % 10 == 0:
+                    # Check stop flag every 5 chunks for faster response on shutdown
+                    if chunk_count % 5 == 0:
                         if not thread_manager.is_running(thread_id):
-                            r.close()
+                            logger.info(f"[Thread {thread_id}] Stop detected in chunk loop, closing connection")
+                            try:
+                                r.close()
+                                if hasattr(r, 'raw'):
+                                    r.raw.close()
+                            except:
+                                pass
                             break
                     
                     buffer += chunk
@@ -344,9 +352,12 @@ def process_video_stream_background(thread_id, url, model_id=None, classifier_id
                 break
                 
             except requests.exceptions.Timeout as e:
-                # Timeout error - don't retry, just stop
-                logger.error(f"[Error] Timeout in thread {thread_id}: {e}")
-                thread_manager.set_status(thread_id, 'error: timeout')
+                # Timeout can occur during normal shutdown - check if stopping
+                if not thread_manager.is_running(thread_id):
+                    logger.info(f"[Thread {thread_id}] Timeout during shutdown (expected)")
+                else:
+                    logger.error(f"[Error] Timeout in thread {thread_id}: {e}")
+                    thread_manager.set_status(thread_id, 'error: timeout')
                 break
                 
             except requests.exceptions.ConnectionError as e:
@@ -387,14 +398,22 @@ def process_video_stream_background(thread_id, url, model_id=None, classifier_id
         gc.collect()
         logger.info(f"[Cleanup] Memory freed via garbage collection")
         
-        # Close any open request
+        # Aggressively close any open request
         if current_request:
             try:
                 logger.info(f"[Cleanup] Closing HTTP connection for thread {thread_id}")
                 current_request.close()
-                # Force close the underlying connection
+                # Force close the underlying connection and socket
                 if hasattr(current_request, 'raw'):
-                    current_request.raw.close()
+                    try:
+                        current_request.raw.close()
+                        # Force close underlying socket
+                        if hasattr(current_request.raw, '_fp'):
+                            current_request.raw._fp.close()
+                    except:
+                        pass
+                # Delete the request object
+                del current_request
             except Exception as e:
                 logger.error(f"[Cleanup] Error closing request: {e}")
 

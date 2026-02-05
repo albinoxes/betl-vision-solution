@@ -80,25 +80,38 @@ def index():
 def cleanup_threads():
     """Stop all active threads gracefully"""
     from infrastructure.thread_manager import get_thread_manager
+    import gc
     
     logger.info("\nShutting down... stopping all active threads")
     
     thread_manager = get_thread_manager()
-    thread_manager.stop_all_threads(timeout=5.0)
+    thread_manager.stop_all_threads(timeout=10.0)  # Increased timeout
     
-    logger.info("All threads stopped. Exiting...")
+    logger.info("All threads stopped. Cleaning up resources...")
     
     # Stop health monitoring
     health_service.stop_all()
     
+    # Force garbage collection to free memory
+    collected = gc.collect()
+    logger.info(f"Garbage collection freed {collected} objects")
+    
     # Stop logger
     logger.stop()
+    
+    logger.info("Cleanup complete. Safe to exit.")
 
 def signal_handler(sig, frame):
     """Handle Ctrl-C signal"""
     print("\n\nReceived interrupt signal, shutting down...")
-    cleanup_threads()
-    sys.exit(0)
+    try:
+        cleanup_threads()
+    except Exception as e:
+        print(f"Error during cleanup: {e}")
+    finally:
+        print("Forcing exit...")
+        import os
+        os._exit(0)  # Force exit without waiting for cleanup
 
 # Register signal handler for Ctrl-C BEFORE starting Flask
 signal.signal(signal.SIGINT, signal_handler)
