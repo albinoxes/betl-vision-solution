@@ -14,11 +14,13 @@ from iris_communication.sftp_processor import sftp_processor
 from sqlite.sftp_sqlite_provider import sftp_provider
 from infrastructure.logging.logging_provider import get_logger
 from infrastructure.thread_manager import get_thread_manager
+from infrastructure.socket_manager import get_socket_manager
 import atexit
 
-# Initialize logger and thread manager
+# Initialize logger, thread manager, and socket manager
 logger = get_logger()
 thread_manager = get_thread_manager()
+socket_manager = get_socket_manager()
 
 CAMERA_URL = "http://localhost:5001/video"
 
@@ -27,19 +29,9 @@ PROCESSING_INTERVAL_SECONDS = 1.0  # Process every 1 second
 
 def generate_frames():
     """Generator with proper cleanup to prevent memory leaks."""
-    r = None
-    try:
-        r = requests.get(CAMERA_URL, stream=True, timeout=(5, None))
-        for chunk in r.iter_content(chunk_size=1024):
-            yield chunk
-    finally:
-        if r is not None:
-            try:
-                r.close()
-                if hasattr(r, 'raw'):
-                    r.raw.close()
-            except:
-                pass
+    # Use SocketManager for automatic cleanup
+    for chunk in socket_manager.get_stream_generator(CAMERA_URL, chunk_size=1024):
+        yield chunk
 
 def process_video_stream_background(thread_id, url, model_id=None, classifier_id=None, settings_id=None):
     """
@@ -111,10 +103,6 @@ def process_video_stream_background(thread_id, url, model_id=None, classifier_id
     thread_manager.set_status(thread_id, 'running')
     thread_manager.update_metadata(thread_id, {'frame_count': 0})
     
-    # Don't use a persistent session to avoid socket issues on Windows
-    # Create new connection for each request cycle
-    current_request = None
-    
     logger.info(f"[Thread {thread_id}] Starting stream processing")
     logger.info(f"[Thread {thread_id}] URL: {url}")
     logger.info(f"[Thread {thread_id}] Model ID: {model_id}, Classifier ID: {classifier_id}, Settings ID: {settings_id}")
@@ -127,32 +115,23 @@ def process_video_stream_background(thread_id, url, model_id=None, classifier_id
                 break
             
             try:
-                # Use timeout for both connection AND reading to prevent hanging
+                # Use SocketManager for managed streaming
                 logger.info(f"[Thread {thread_id}] Connecting to video stream...")
-                # Don't reuse connections - create fresh request each time
-                # Use read timeout of 10 seconds to prevent hanging on Ctrl+C
-                current_request = requests.get(url, stream=True, timeout=(5, 10))
-                r = current_request
                 logger.info(f"[Thread {thread_id}] Connected successfully, starting frame processing")
                 boundary = b'--frame'
                 buffer = b''
                 MAX_BUFFER_SIZE = 10 * 1024 * 1024  # 10MB max buffer
                 
-                # Process chunks with periodic stop checks
+                # Process chunks with periodic stop checks using SocketManager
                 chunk_count = 0
-                for chunk in r.iter_content(chunk_size=8192):
+                for chunk in socket_manager.stream(thread_id, url, chunk_size=8192):
                     chunk_count += 1
                     
                     # Check stop flag every 5 chunks for faster response on shutdown
                     if chunk_count % 5 == 0:
                         if not thread_manager.is_running(thread_id):
-                            logger.info(f"[Thread {thread_id}] Stop detected in chunk loop, closing connection")
-                            try:
-                                r.close()
-                                if hasattr(r, 'raw'):
-                                    r.raw.close()
-                            except:
-                                pass
+                            logger.info(f"[Thread {thread_id}] Stop detected in chunk loop, closing stream")
+                            socket_manager.close_stream(thread_id)
                             break
                     
                     buffer += chunk
@@ -343,10 +322,7 @@ def process_video_stream_background(thread_id, url, model_id=None, classifier_id
                                 del img2d
                                 del nparr
                 
-                # Close the response properly
-                if current_request:
-                    current_request.close()
-                
+                # Stream is automatically closed by SocketManager
                 # If we got here without errors, break the retry loop
                 # to avoid unnecessary reconnections
                 break
@@ -398,24 +374,9 @@ def process_video_stream_background(thread_id, url, model_id=None, classifier_id
         gc.collect()
         logger.info(f"[Cleanup] Memory freed via garbage collection")
         
-        # Aggressively close any open request
-        if current_request:
-            try:
-                logger.info(f"[Cleanup] Closing HTTP connection for thread {thread_id}")
-                current_request.close()
-                # Force close the underlying connection and socket
-                if hasattr(current_request, 'raw'):
-                    try:
-                        current_request.raw.close()
-                        # Force close underlying socket
-                        if hasattr(current_request.raw, '_fp'):
-                            current_request.raw._fp.close()
-                    except:
-                        pass
-                # Delete the request object
-                del current_request
-            except Exception as e:
-                logger.error(f"[Cleanup] Error closing request: {e}")
+        # Ensure stream is closed (SocketManager handles cleanup)
+        socket_manager.close_stream(thread_id)
+        logger.info(f"[Cleanup] Stream closed via SocketManager")
 
 def process_video_stream(url, model_id=None, classifier_id=None, settings_id=None):
     """
@@ -438,15 +399,17 @@ def process_video_stream(url, model_id=None, classifier_id=None, settings_id=Non
         except Exception as e:
             logger.error(f"Error loading model or settings: {e}")
     
-    # Use timeout and proper connection management to prevent socket exhaustion
-    r = None
+    # Use SocketManager for proper connection management
     try:
-        r = requests.get(url, stream=True, timeout=(5, None))
         boundary = b'--frame'
         buffer = b''
         MAX_BUFFER_SIZE = 10 * 1024 * 1024  # 10MB max buffer to prevent memory leak
         
-        for chunk in r.iter_content(chunk_size=8192):
+        # Generate unique stream ID for tracking
+        import uuid
+        stream_id = f"process_stream_{uuid.uuid4().hex[:8]}"
+        
+        for chunk in socket_manager.stream(stream_id, url, chunk_size=8192):
             buffer += chunk
             
             # Prevent buffer from growing unbounded
@@ -519,14 +482,7 @@ def process_video_stream(url, model_id=None, classifier_id=None, settings_id=Non
         if buffer:
             yield buffer
     finally:
-        # Always close the connection to prevent socket exhaustion
-        if r is not None:
-            try:
-                r.close()
-                if hasattr(r, 'raw'):
-                    r.raw.close()
-            except Exception as e:
-                logger.error(f"Error closing stream connection: {e}")
+        # SocketManager handles connection cleanup automatically
         
         # Explicitly delete model and settings to free memory
         if model is not None:
@@ -545,10 +501,14 @@ camera_bp = Blueprint('camera', __name__)
 # Register cleanup handler to stop all threads when app closes
 @atexit.register
 def cleanup_threads_on_exit():
-    """Stop all managed threads when the application is closing."""
+    """Stop all managed threads and close all sockets when the application is closing."""
     logger.info("[Shutdown] Application closing, stopping all threads...")
     thread_manager.stop_all_threads(timeout=10.0)
     logger.info("[Shutdown] All threads stopped successfully")
+    
+    logger.info("[Shutdown] Closing all socket connections...")
+    socket_manager.shutdown()
+    logger.info("[Shutdown] All sockets closed successfully")
 
 @camera_bp.route('/video')
 def video():
@@ -572,23 +532,9 @@ def legacy_camera_video(device_id):
     settings_param = request.args.get('settings')
     url = f"http://localhost:5002/camera-video/{device_id}"
     
-    # If no processing is requested, use simple passthrough with proper cleanup
+    # If no processing is requested, use simple passthrough with SocketManager
     if not model_param and not classifier_param:
-        def generate_with_cleanup():
-            r = None
-            try:
-                r = requests.get(url, stream=True, timeout=(5, None))
-                for chunk in r.iter_content(chunk_size=1024):
-                    yield chunk
-            finally:
-                if r is not None:
-                    try:
-                        r.close()
-                        if hasattr(r, 'raw'):
-                            r.raw.close()
-                    except:
-                        pass
-        return Response(generate_with_cleanup(),
+        return Response(socket_manager.get_stream_generator(url, chunk_size=1024),
                        mimetype='multipart/x-mixed-replace; boundary=frame')
     
     # Otherwise use processing pipeline
@@ -602,23 +548,9 @@ def simulator_video():
     settings_param = request.args.get('settings')
     url = "http://localhost:5003/video/simulator"
     
-    # If no processing is requested, use simple passthrough with proper cleanup
+    # If no processing is requested, use simple passthrough with SocketManager
     if not model_param and not classifier_param:
-        def generate_with_cleanup():
-            r = None
-            try:
-                r = requests.get(url, stream=True, timeout=(5, None))
-                for chunk in r.iter_content(chunk_size=1024):
-                    yield chunk
-            finally:
-                if r is not None:
-                    try:
-                        r.close()
-                        if hasattr(r, 'raw'):
-                            r.raw.close()
-                    except:
-                        pass
-        return Response(generate_with_cleanup(),
+        return Response(socket_manager.get_stream_generator(url, chunk_size=1024),
                        mimetype='multipart/x-mixed-replace; boundary=frame')
     
     # Otherwise use processing pipeline
@@ -635,7 +567,7 @@ def connected_devices():
     def query_legacy():
         try:
             logger.info("[Connected Devices] Querying legacy-camera-server (port 5002)...")
-            response = requests.get('http://localhost:5002/devices', timeout=2)
+            response = socket_manager.get('http://localhost:5002/devices', timeout=(2, 2))
             if response.status_code == 200:
                 result = [{'type': 'legacy', 'id': dev['id'], 'info': dev['info'], 
                         'ip': dev['info'].split(';')[0] if ';' in dev['info'] else 'unknown',
@@ -649,7 +581,7 @@ def connected_devices():
     def query_webcam():
         try:
             logger.info("[Connected Devices] Querying webcam-server (port 5001)...")
-            response = requests.get('http://localhost:5001/devices', timeout=2)
+            response = socket_manager.get('http://localhost:5001/devices', timeout=(2, 2))
             if response.status_code == 200:
                 result = [{'type': 'webcam', 'id': dev['id'], 'info': dev['info'],
                         'ip': 'localhost', 'status': dev['status']} for dev in response.json()]
@@ -662,7 +594,7 @@ def connected_devices():
     def query_simulator():
         try:
             logger.info("[Connected Devices] Querying simulator-server (port 5003)...")
-            response = requests.get('http://localhost:5003/devices', timeout=2)
+            response = socket_manager.get('http://localhost:5003/devices', timeout=(2, 2))
             if response.status_code == 200:
                 result = [{'type': 'simulator', 'id': dev['id'], 'info': dev['info'],
                         'ip': 'localhost', 'status': dev['status']} for dev in response.json()]
@@ -746,7 +678,7 @@ def start_thread():
     
     # Check if the server is reachable before starting thread
     try:
-        check_response = requests.get(server_check_url, timeout=2)
+        check_response = socket_manager.get(server_check_url, timeout=(2, 2))
         if check_response.status_code != 200:
             return jsonify({'error': f'{device_type.capitalize()} server is not responding properly (status {check_response.status_code})'}), 503
     except requests.exceptions.ConnectionError:
@@ -852,6 +784,12 @@ def get_system_resources():
         'garbage_objects': len(gc.garbage)
     }
     
+    # Socket manager stats
+    socket_stats = socket_manager.get_stats()
+    
+    # Logging stats
+    logging_stats = logger.get_stats()
+    
     return jsonify({
         'memory_mb': round(memory_mb, 2),
         'cpu_percent': cpu_percent,
@@ -859,7 +797,9 @@ def get_system_resources():
         'active_processing_threads': active_count,
         'total_threads_tracked': total_tracked,
         'active_sessions': session_count,
-        'garbage_collection': gc_stats
+        'garbage_collection': gc_stats,
+        'socket_manager': socket_stats,
+        'logging': logging_stats
     })
 
 @camera_bp.route('/cleanup-resources', methods=['POST'])
@@ -873,6 +813,9 @@ def cleanup_resources():
     # Cleanup old sessions
     store_data_manager.cleanup_old_sessions()
     
+    # Cleanup old streams
+    socket_manager.cleanup_old_streams(max_age_seconds=1800)  # 30 minutes
+    
     # Force garbage collection
     collected = gc.collect()
     
@@ -880,5 +823,6 @@ def cleanup_resources():
         'success': True,
         'threads_cleaned': 'stopped threads removed',
         'sessions_cleaned': 'old sessions removed',
+        'streams_cleaned': 'old streams closed',
         'objects_collected': collected
     })
