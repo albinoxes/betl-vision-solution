@@ -1,15 +1,18 @@
 import logging
 import threading
 import inspect
+import queue
+import atexit
+import gc
 from datetime import datetime
 from pathlib import Path
-from logging.handlers import RotatingFileHandler
+from logging.handlers import RotatingFileHandler, QueueHandler, QueueListener
 
 
 class LoggingProvider:
     """
-    Singleton logging provider using Python's logging library.
-    Creates rotating log files with custom formatting.
+    Singleton logging provider with non-blocking async writes.
+    Uses queue-based logging to prevent blocking on I/O operations.
     """
     _instance = None
     _lock = threading.Lock()
@@ -57,12 +60,35 @@ class LoggingProvider:
         formatter = CustomFormatter()
         file_handler.setFormatter(formatter)
         
-        # Add handler to logger
-        self._logger.addHandler(file_handler)
+        # Create a queue for async logging
+        self._log_queue = queue.Queue(maxsize=10000)  # Limit queue size to prevent unbounded growth
+        
+        # Create QueueHandler to send logs to the queue (non-blocking)
+        queue_handler = QueueHandler(self._log_queue)
+        self._logger.addHandler(queue_handler)
+        
+        # Create QueueListener to process logs from queue in background thread
+        self._queue_listener = QueueListener(
+            self._log_queue,
+            file_handler,
+            respect_handler_level=True
+        )
+        
+        # Track if listener is started
+        self._listener_started = False
+        
+        # Keep reference to file handler for cleanup
+        self._file_handler = file_handler
+        
+        # Register cleanup on exit
+        atexit.register(self._cleanup)
         
     def start(self):
-        """Start the logging (for compatibility with old interface)."""
-        self._logger.info(f"Logging started - Log file: {self._log_file_path}")
+        """Start the async logging listener."""
+        if not self._listener_started:
+            self._queue_listener.start()
+            self._listener_started = True
+            self._logger.info(f"Async logging started - Log file: {self._log_file_path}")
     
     def log(self, message):
         """
@@ -77,9 +103,15 @@ class LoggingProvider:
         """Log an info message."""
         self._logger.info(message)
     
-    def error(self, message):
-        """Log an error message."""
-        self._logger.error(message)
+    def error(self, message, exc_info=False):
+        """
+        Log an error message.
+        
+        Args:
+            message: Error message to log
+            exc_info: If True, includes exception traceback
+        """
+        self._logger.error(message, exc_info=exc_info)
     
     def warning(self, message):
         """Log a warning message."""
@@ -89,12 +121,50 @@ class LoggingProvider:
         """Log a debug message."""
         self._logger.debug(message)
     
+    def _cleanup(self):
+        """Internal cleanup method."""
+        if self._listener_started:
+            try:
+                # Stop queue listener (processes remaining messages)
+                self._queue_listener.stop()
+                self._listener_started = False
+                
+                # Close and flush file handler
+                if self._file_handler:
+                    self._file_handler.flush()
+                    self._file_handler.close()
+                
+                # Clear queue to free memory
+                while not self._log_queue.empty():
+                    try:
+                        self._log_queue.get_nowait()
+                    except queue.Empty:
+                        break
+                
+                # Force garbage collection
+                gc.collect()
+                
+            except Exception as e:
+                # Fallback to print if logging fails during cleanup
+                print(f"Error during logging cleanup: {e}")
+    
     def stop(self):
         """Stop the logging and flush handlers."""
         self._logger.info("Logging stopped")
-        for handler in self._logger.handlers:
-            handler.flush()
-            handler.close()
+        self._cleanup()
+    
+    def get_queue_size(self):
+        """Get current queue size for monitoring."""
+        return self._log_queue.qsize()
+    
+    def get_stats(self):
+        """Get logging statistics."""
+        return {
+            'queue_size': self._log_queue.qsize(),
+            'queue_maxsize': self._log_queue.maxsize,
+            'log_file': str(self._log_file_path),
+            'listener_running': self._listener_started
+        }
 
 
 class CustomFormatter(logging.Formatter):
