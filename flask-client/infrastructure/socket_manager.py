@@ -11,6 +11,7 @@ import time
 from typing import Dict, Optional, Any, Generator
 from urllib.parse import urlparse
 from infrastructure.logging.logging_provider import get_logger
+from infrastructure import config
 
 logger = get_logger()
 
@@ -30,10 +31,10 @@ class SocketManager:
     
     def __init__(
         self,
-        max_connections_per_host: int = 20,  # Increased for concurrent streams
-        max_total_connections: int = 100,
-        default_timeout: tuple = (5, 30),  # (connect_timeout, read_timeout)
-        stream_timeout: tuple = (10, 300)   # 5 minute read timeout for long-running streams
+        max_connections_per_host: int = None,
+        max_total_connections: int = None,
+        default_timeout: tuple = None,
+        stream_timeout: tuple = None
     ):
         """
         Initialize the socket manager.
@@ -48,11 +49,11 @@ class SocketManager:
         self._active_streams: Dict[str, Any] = {}
         self._lock = threading.Lock()
         
-        # Configuration
-        self.max_connections_per_host = max_connections_per_host
-        self.max_total_connections = max_total_connections
-        self.default_timeout = default_timeout
-        self.stream_timeout = stream_timeout
+        # Configuration - use config defaults if not specified
+        self.max_connections_per_host = max_connections_per_host or config.SOCKET_MAX_CONNECTIONS_PER_HOST
+        self.max_total_connections = max_total_connections or config.SOCKET_MAX_TOTAL_CONNECTIONS
+        self.default_timeout = default_timeout or config.SOCKET_DEFAULT_TIMEOUT
+        self.stream_timeout = stream_timeout or config.SOCKET_STREAM_TIMEOUT
         
         # Statistics
         self._stats = {

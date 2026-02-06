@@ -19,6 +19,7 @@ from sqlite.sftp_sqlite_provider import sftp_provider
 from infrastructure.logging.logging_provider import get_logger
 from infrastructure.thread_manager import get_thread_manager
 from infrastructure.socket_manager import get_socket_manager
+from infrastructure import config
 import atexit
 
 # Create Blueprint FIRST (must be before route decorators)
@@ -33,7 +34,8 @@ sftp_uploader = get_sftp_uploader()
 classifier_processor = get_classifier_processor()
 model_detector = get_model_detector()
 
-CAMERA_URL = "http://localhost:5001/video"
+# Webcam server URL from config
+CAMERA_URL = config.get_server_video_url('webcam')
 
 # Processing interval in seconds - controls how often frames are processed with ML models
 PROCESSING_INTERVAL_SECONDS = 1.0  # Process every 1 second
@@ -398,19 +400,19 @@ def process_video_stream_background(thread_id, url, model_id=None, classifier_id
                 logger.info(f"[Thread {thread_id}] Connecting to video stream: {url}")
                 boundary = b'--frame'
                 buffer = b''
-                MAX_BUFFER_SIZE = 10 * 1024 * 1024  # 10MB max buffer
+                MAX_BUFFER_SIZE = config.STREAM_MAX_BUFFER_SIZE
                 
                 # Process chunks with periodic stop checks using SocketManager
                 chunk_count = 0
                 stream_started = False
-                for chunk in socket_manager.stream(thread_id, url, chunk_size=8192):
+                for chunk in socket_manager.stream(thread_id, url, chunk_size=config.SOCKET_STREAM_CHUNK_SIZE):
                     if not stream_started:
                         logger.info(f"[Thread {thread_id}] Connected successfully, receiving frames")
                         stream_started = True
                     chunk_count += 1
                     
-                    # Check stop flag every 5 chunks for faster response on shutdown
-                    if chunk_count % 5 == 0:
+                    # Check stop flag every N chunks for faster response on shutdown
+                    if chunk_count % config.STREAM_CHUNK_CHECK_INTERVAL == 0:
                         if not thread_manager.is_running(thread_id):
                             logger.info(f"[Thread {thread_id}] Stop detected in chunk loop, exiting")
                             break
@@ -697,7 +699,7 @@ def legacy_camera_video(device_id):
     model_param = request.args.get('model')
     classifier_param = request.args.get('classifier')
     settings_param = request.args.get('settings')
-    url = f"http://localhost:5002/camera-video/{device_id}"
+    url = config.get_server_video_url('legacy', device_id)
     
     # If no processing is requested, use simple passthrough with SocketManager
     if not model_param and not classifier_param:
@@ -719,7 +721,7 @@ def simulator_video():
     model_param = request.args.get('model')
     classifier_param = request.args.get('classifier')
     settings_param = request.args.get('settings')
-    url = "http://localhost:5003/video/simulator"
+    url = config.get_server_video_url('simulator')
     
     logger.info(f"[Simulator Video] Connecting to: {url}")
     logger.info(f"[Simulator Video] Model: {model_param}, Classifier: {classifier_param}")
@@ -754,7 +756,7 @@ def connected_devices():
     def query_legacy():
         try:
             logger.debug("[Connected Devices] Querying legacy-camera-server (port 5002)...")
-            response = socket_manager.get('http://localhost:5002/devices', timeout=(1, 2))
+            response = socket_manager.get(config.get_server_health_url('legacy'), timeout=config.DEVICE_QUERY_TIMEOUT)
             if response.status_code == 200:
                 result = [{'type': 'legacy', 'id': dev['id'], 'info': dev['info'], 
                         'ip': dev['info'].split(';')[0] if ';' in dev['info'] else 'unknown',
@@ -772,7 +774,7 @@ def connected_devices():
     def query_webcam():
         try:
             logger.debug("[Connected Devices] Querying webcam-server (port 5001)...")
-            response = socket_manager.get('http://localhost:5001/devices', timeout=(1, 2))
+            response = socket_manager.get(config.get_server_health_url('webcam'), timeout=config.DEVICE_QUERY_TIMEOUT)
             if response.status_code == 200:
                 result = [{'type': 'webcam', 'id': dev['id'], 'info': dev['info'],
                         'ip': 'localhost', 'status': dev['status']} for dev in response.json()]
@@ -789,7 +791,7 @@ def connected_devices():
     def query_simulator():
         try:
             logger.debug("[Connected Devices] Querying simulator-server (port 5003)...")
-            response = socket_manager.get('http://localhost:5003/devices', timeout=(1, 2))
+            response = socket_manager.get(config.get_server_health_url('simulator'), timeout=config.DEVICE_QUERY_TIMEOUT)
             if response.status_code == 200:
                 result = [{'type': 'simulator', 'id': dev['id'], 'info': dev['info'],
                         'ip': 'localhost', 'status': dev['status']} for dev in response.json()]
@@ -814,7 +816,7 @@ def connected_devices():
         
         # Use as_completed with timeout to avoid hanging
         try:
-            for future in as_completed(futures, timeout=5):
+            for future in as_completed(futures, timeout=config.DEVICE_QUERY_MAX_WAIT):
                 try:
                     devices.extend(future.result())
                 except Exception as e:
@@ -876,19 +878,19 @@ def start_thread():
     
     # Determine URL based on device type
     if device_type == 'legacy':
-        url = f"http://localhost:5002/camera-video/{device_id}"
-        server_check_url = "http://localhost:5002/devices"
+        url = config.get_server_video_url('legacy', device_id)
+        server_check_url = config.get_server_health_url('legacy')
     elif device_type == 'simulator':
-        url = "http://localhost:5003/video/simulator"
-        server_check_url = "http://localhost:5003/devices"
+        url = config.get_server_video_url('simulator')
+        server_check_url = config.get_server_health_url('simulator')
     else:  # webcam
-        url = "http://localhost:5001/video"
-        server_check_url = "http://localhost:5001/devices"
+        url = config.get_server_video_url('webcam')
+        server_check_url = config.get_server_health_url('webcam')
     
     # Check if the server is reachable before starting thread (quick check)
     try:
         logger.info(f"[Start Thread] Checking server availability: {server_check_url}")
-        check_response = socket_manager.get(server_check_url, timeout=(1, 2))
+        check_response = socket_manager.get(server_check_url, timeout=config.THREAD_START_SERVER_CHECK_TIMEOUT)
         if check_response.status_code != 200:
             logger.error(f"[Start Thread] Server check failed with status {check_response.status_code}")
             return jsonify({'error': f'{device_type.capitalize()} server is not responding properly (status {check_response.status_code})'}), 503
