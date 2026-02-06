@@ -400,8 +400,7 @@ def process_video_stream_background(thread_id, url, model_id=None, classifier_id
                     # Check stop flag every 5 chunks for faster response on shutdown
                     if chunk_count % 5 == 0:
                         if not thread_manager.is_running(thread_id):
-                            logger.info(f"[Thread {thread_id}] Stop detected in chunk loop, closing stream")
-                            socket_manager.close_stream(thread_id)
+                            logger.info(f"[Thread {thread_id}] Stop detected in chunk loop, exiting")
                             break
                     
                     buffer += chunk
@@ -853,9 +852,12 @@ def stop_thread():
     
     logger.info(f"[Stop Thread] Received request to stop thread: {thread_id}")
     
+    # First, forcefully close the stream to interrupt any blocking reads
+    socket_manager.close_stream(thread_id)
+    
     # Stop the thread using ThreadManager
     # Note: stop_thread returns True if thread stopped OR was already stopped
-    success = thread_manager.stop_thread(thread_id, timeout=10.0)
+    success = thread_manager.stop_thread(thread_id, timeout=15.0)
     
     if not success:
         logger.error(f"[Stop Thread] Failed to stop thread {thread_id} - thread exists but won't stop")

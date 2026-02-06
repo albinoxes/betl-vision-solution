@@ -226,6 +226,7 @@ class SocketManager:
     def close_stream(self, stream_id: str) -> bool:
         """
         Manually close a stream by ID.
+        This will interrupt any blocking iter_content() calls.
         
         Args:
             stream_id: ID of the stream to close
@@ -233,11 +234,37 @@ class SocketManager:
         Returns:
             bool: True if stream was found and closed
         """
+        response = None
         with self._lock:
             if stream_id in self._active_streams:
-                self._close_stream(stream_id)
-                return True
-            return False
+                # Get response object while holding lock
+                response = self._active_streams[stream_id].get('response')
+            else:
+                return False
+        
+        # Close response outside lock to avoid deadlock and interrupt blocking calls
+        if response:
+            try:
+                # Force close the response to interrupt iter_content()
+                response.close()
+                if hasattr(response, 'raw'):
+                    response.raw.close()
+                    # Force close underlying socket to interrupt blocking reads
+                    if hasattr(response.raw, '_fp') and response.raw._fp:
+                        try:
+                            response.raw._fp.close()
+                        except:
+                            pass
+            except Exception as e:
+                logger.debug(f"[SocketManager] Exception while force-closing stream {stream_id}: {e}")
+        
+        # Now clean up the tracking
+        with self._lock:
+            self._active_streams.pop(stream_id, None)
+            self._stats['connections_closed'] += 1
+        
+        logger.debug(f"[SocketManager] Stream {stream_id} forcefully closed")
+        return True
     
     def get_stream_generator(
         self,
