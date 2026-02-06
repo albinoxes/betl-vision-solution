@@ -6,6 +6,7 @@ import time
 from datetime import datetime
 from computer_vision.ml_model_image_processor import object_process_image, CameraSettings
 from computer_vision.classifier_image_processor import classifier_process_image
+from computer_vision.classifier_processor_thread import get_classifier_processor
 from storage_data.store_data_manager import store_data_manager
 from sqlite.video_stream_sqlite_provider import video_stream_provider
 from iris_communication.iris_input_processor import iris_input_processor
@@ -18,12 +19,13 @@ from infrastructure.thread_manager import get_thread_manager
 from infrastructure.socket_manager import get_socket_manager
 import atexit
 
-# Initialize logger, thread manager, socket manager, CSV writer, and SFTP uploader
+# Initialize logger, thread manager, socket manager, CSV writer, SFTP uploader, and classifier processor
 logger = get_logger()
 thread_manager = get_thread_manager()
 socket_manager = get_socket_manager()
 csv_writer = get_csv_writer()
 sftp_uploader = get_sftp_uploader()
+classifier_processor = get_classifier_processor()
 
 CAMERA_URL = "http://localhost:5001/video"
 
@@ -315,32 +317,27 @@ def process_video_stream_background(thread_id, url, model_id=None, classifier_id
                                     # Check if processing interval has elapsed
                                     current_time = time.time()
                                     if current_time - last_classifier_processing_time >= processing_interval:
-                                        logger.debug(f"[Processing] Classifier processing frame at {current_time:.2f}, interval: {current_time - last_classifier_processing_time:.2f}s")
+                                        logger.debug(f"[Processing] Queuing frame for classifier at {current_time:.2f}, interval: {current_time - last_classifier_processing_time:.2f}s")
                                         try:
                                             # Increment frame count for processed frame (if not already incremented by model)
                                             if not model_id:
                                                 frame_count += 1
                                             # Use processing time for CSV timestamp
                                             processing_timestamp = datetime.now()
-                                            belt_status = classifier_process_image(img2d.copy(), classifier_id=classifier_id)
                                             
-                                            # Queue CSV generation with callback (non-blocking)
-                                            csv_writer.queue_csv_generation(
-                                                project_settings=project_settings,
+                                            # Queue frame for classification (non-blocking)
+                                            classifier_processor.queue_classification(
+                                                frame=img2d,
+                                                classifier_id=classifier_id,
                                                 timestamp=processing_timestamp,
-                                                data=belt_status,
-                                                folder_type='classifier',
-                                                callback=create_classifier_csv_callback(
-                                                    sftp_server_info,
-                                                    project_settings,
-                                                    previous_classifier_csv_tracker
-                                                )
+                                                project_settings=project_settings,
+                                                sftp_server_info=sftp_server_info
                                             )
                                             
                                             # Update last processing time
                                             last_classifier_processing_time = current_time
                                         except Exception as e:
-                                            logger.error(f"Error processing with classifier: {e}")
+                                            logger.error(f"Error queuing classifier: {e}")
                                 
                                 # Update frame count
                                 thread_manager.update_metadata(thread_id, {
@@ -842,6 +839,17 @@ def get_csv_writer_stats():
     """Get CSV writer thread statistics."""
     stats = csv_writer.get_stats()
     is_running = csv_writer.is_running()
+    
+    return jsonify({
+        'running': is_running,
+        'stats': stats
+    })
+
+@camera_bp.route('/classifier-processor-stats')
+def get_classifier_processor_stats():
+    """Get classifier processor thread statistics."""
+    stats = classifier_processor.get_stats()
+    is_running = classifier_processor.is_running()
     
     return jsonify({
         'running': is_running,

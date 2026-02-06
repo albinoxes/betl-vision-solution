@@ -10,6 +10,7 @@ from infrastructure.logging.logging_provider import get_logger
 from infrastructure.monitoring import HealthMonitoringService, ServerConfig
 from iris_communication.csv_writer_thread import get_csv_writer
 from iris_communication.sftp_uploader_thread import get_sftp_uploader
+from computer_vision.classifier_processor_thread import get_classifier_processor
 import signal
 import atexit
 
@@ -22,6 +23,11 @@ logger = get_logger()
 csv_writer = get_csv_writer()
 csv_writer.start()
 logger.info("CSV writer thread started")
+
+# Initialize and start classifier processor thread
+classifier_processor = get_classifier_processor()
+classifier_processor.start()
+logger.info("Classifier processor thread started")
 
 # Initialize and start SFTP uploader thread
 sftp_uploader = get_sftp_uploader()
@@ -99,6 +105,13 @@ def cleanup_threads():
     thread_manager = get_thread_manager()
     thread_manager.stop_all_threads(timeout=10.0)
     
+    # Stop classifier processor thread (finishes pending classifications)
+    classifier_processor = get_classifier_processor()
+    if classifier_processor.is_running():
+        logger.info("Stopping classifier processor thread...")
+        classifier_processor.stop(timeout=10.0)
+        logger.info("Classifier processor thread stopped")
+    
     # Stop CSV writer thread (finishes pending CSV generations)
     csv_writer = get_csv_writer()
     if csv_writer.is_running():
@@ -150,6 +163,10 @@ signal.signal(signal.SIGINT, signal_handler)
 # Register cleanup on exit
 def cleanup_on_exit():
     try:
+        # Stop classifier processor
+        classifier_processor = get_classifier_processor()
+        if classifier_processor.is_running():
+            classifier_processor.stop(timeout=5.0)
         # Stop CSV writer
         csv_writer = get_csv_writer()
         if csv_writer.is_running():
