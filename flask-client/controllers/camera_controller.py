@@ -20,6 +20,9 @@ from infrastructure.thread_manager import get_thread_manager
 from infrastructure.socket_manager import get_socket_manager
 import atexit
 
+# Create Blueprint FIRST (must be before route decorators)
+camera_bp = Blueprint('camera', __name__)
+
 # Initialize logger, thread manager, socket manager, CSV writer, SFTP uploader, classifier processor, and model detector
 logger = get_logger()
 thread_manager = get_thread_manager()
@@ -345,7 +348,12 @@ def _cleanup_processing_resources(thread_id, model, settings):
 
 def process_video_stream_background(thread_id, url, model_id=None, classifier_id=None, settings_id=None):
     """
-    Process video stream in background thread.
+    Process video stream in background thread with DATA COLLECTION.
+    
+    This function handles background processing with CSV generation and SFTP uploads.
+    It queues frames for ML processing via worker threads and saves results to CSV files.
+    
+    For real-time visualization only (no CSV/SFTP), use process_video_stream() instead.
     
     Args:
         thread_id: Unique identifier for this thread
@@ -513,7 +521,12 @@ def process_video_stream_background(thread_id, url, model_id=None, classifier_id
 
 def process_video_stream(url, model_id=None, classifier_id=None, settings_id=None):
     """
-    Process video stream from camera server with ML models.
+    Process video stream from camera server with ML models for VISUALIZATION ONLY.
+    
+    This function provides real-time visualization of ML processing (detections and classifications)
+    WITHOUT any CSV generation or SFTP uploads. It only processes frames for display purposes.
+    
+    For data collection with CSV/SFTP, use process_video_stream_background() instead.
     
     Args:
         url: URL of the video stream
@@ -629,8 +642,6 @@ def process_video_stream(url, model_id=None, classifier_id=None, settings_id=Non
         import gc
         gc.collect()
 
-camera_bp = Blueprint('camera', __name__)
-
 # Register cleanup handler to stop all threads when app closes
 @atexit.register
 def cleanup_threads_on_exit():
@@ -645,6 +656,11 @@ def cleanup_threads_on_exit():
 
 @camera_bp.route('/video')
 def video():
+    """
+    Webcam video endpoint for VISUALIZATION ONLY.
+    Returns real-time video feed with optional ML processing visualization.
+    Does NOT generate CSV files or upload to SFTP.
+    """
     model_param = request.args.get('model')
     classifier_param = request.args.get('classifier')
     settings_param = request.args.get('settings')
@@ -654,12 +670,17 @@ def video():
         return Response(generate_frames(),
                        mimetype='multipart/x-mixed-replace; boundary=frame')
     
-    # Otherwise use processing pipeline
+    # Otherwise use processing pipeline for visualization
     return Response(process_video_stream(CAMERA_URL, model_param, classifier_param, settings_param),
                    mimetype='multipart/x-mixed-replace; boundary=frame')
 
 @camera_bp.route('/legacy-camera-video/<int:device_id>')
 def legacy_camera_video(device_id):
+    """
+    Legacy camera video endpoint for VISUALIZATION ONLY.
+    Returns real-time video feed with optional ML processing visualization.
+    Does NOT generate CSV files or upload to SFTP.
+    """
     model_param = request.args.get('model')
     classifier_param = request.args.get('classifier')
     settings_param = request.args.get('settings')
@@ -670,12 +691,17 @@ def legacy_camera_video(device_id):
         return Response(socket_manager.get_stream_generator(url, chunk_size=1024),
                        mimetype='multipart/x-mixed-replace; boundary=frame')
     
-    # Otherwise use processing pipeline
+    # Otherwise use processing pipeline for visualization
     return Response(process_video_stream(url, model_param, classifier_param, settings_param),
                    mimetype='multipart/x-mixed-replace; boundary=frame')
 
 @camera_bp.route('/simulator-video')
 def simulator_video():
+    """
+    Simulator video endpoint for VISUALIZATION ONLY.
+    Returns real-time video feed with optional ML processing visualization.
+    Does NOT generate CSV files or upload to SFTP.
+    """
     model_param = request.args.get('model')
     classifier_param = request.args.get('classifier')
     settings_param = request.args.get('settings')
@@ -686,7 +712,7 @@ def simulator_video():
         return Response(socket_manager.get_stream_generator(url, chunk_size=1024),
                        mimetype='multipart/x-mixed-replace; boundary=frame')
     
-    # Otherwise use processing pipeline
+    # Otherwise use processing pipeline for visualization
     return Response(process_video_stream(url, model_param, classifier_param, settings_param),
                    mimetype='multipart/x-mixed-replace; boundary=frame')
 
