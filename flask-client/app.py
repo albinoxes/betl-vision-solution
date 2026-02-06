@@ -9,7 +9,6 @@ from controllers.health_controller import health_bp
 from infrastructure.logging.logging_provider import get_logger
 from infrastructure.monitoring import HealthMonitoringService, ServerConfig
 import signal
-import sys
 import atexit
 
 app = Flask(__name__)
@@ -101,10 +100,10 @@ def cleanup_threads():
     collected = gc.collect()
     logger.info(f"Garbage collection freed {collected} objects")
     
-    # Stop logger
-    logger.stop()
-    
     logger.info("Cleanup complete. Safe to exit.")
+    
+    # Stop logger (this flushes remaining logs and closes handlers)
+    logger.stop()
 
 def signal_handler(sig, frame):
     """Handle Ctrl-C signal"""

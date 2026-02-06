@@ -2,7 +2,6 @@ from flask import Blueprint, render_template, Response, jsonify, request, redire
 import requests
 import cv2
 import numpy as np
-import threading
 import time
 from datetime import datetime
 from computer_vision.ml_model_image_processor import object_process_image, CameraSettings
