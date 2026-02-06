@@ -46,13 +46,14 @@ logger.info("SFTP uploader thread started")
 health_service = HealthMonitoringService()
 
 # Register servers for health monitoring
+# Use longer intervals and shorter timeouts to reduce server load
 health_service.register_server(ServerConfig(
     name="webcam-server",
     url="http://localhost",
     port=5001,
     health_endpoint="/devices",
-    check_interval=5.0,
-    timeout=2.0
+    check_interval=10.0,  # Check every 10 seconds instead of 5
+    timeout=1.5  # Shorter timeout for faster failure detection
 ))
 
 health_service.register_server(ServerConfig(
@@ -60,8 +61,8 @@ health_service.register_server(ServerConfig(
     url="http://localhost",
     port=5002,
     health_endpoint="/devices",
-    check_interval=5.0,
-    timeout=2.0
+    check_interval=10.0,
+    timeout=1.5
 ))
 
 health_service.register_server(ServerConfig(
@@ -69,8 +70,8 @@ health_service.register_server(ServerConfig(
     url="http://localhost",
     port=5003,
     health_endpoint="/devices",
-    check_interval=5.0,
-    timeout=2.0
+    check_interval=10.0,
+    timeout=1.5
 ))
 
 # Start health monitoring

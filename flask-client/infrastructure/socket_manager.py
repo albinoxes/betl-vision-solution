@@ -30,10 +30,10 @@ class SocketManager:
     
     def __init__(
         self,
-        max_connections_per_host: int = 10,
-        max_total_connections: int = 50,
+        max_connections_per_host: int = 20,  # Increased for concurrent streams
+        max_total_connections: int = 100,
         default_timeout: tuple = (5, 30),  # (connect_timeout, read_timeout)
-        stream_timeout: tuple = (10, 60)   # Longer read timeout for continuous video streams
+        stream_timeout: tuple = (10, 300)   # 5 minute read timeout for long-running streams
     ):
         """
         Initialize the socket manager.
@@ -65,6 +65,7 @@ class SocketManager:
     def _get_session(self, base_url: str) -> requests.Session:
         """
         Get or create a session for a specific host.
+        Thread-safe session management.
         
         Args:
             base_url: Base URL to get session for
@@ -79,16 +80,22 @@ class SocketManager:
             if host_key not in self._sessions:
                 session = requests.Session()
                 
-                # Configure connection pooling
+                # Configure connection pooling with larger pool for streaming
                 adapter = requests.adapters.HTTPAdapter(
                     pool_connections=self.max_connections_per_host,
                     pool_maxsize=self.max_connections_per_host,
                     max_retries=0,  # No automatic retries
-                    pool_block=False
+                    pool_block=False  # Don't block if pool is full, create new connection
                 )
                 
                 session.mount('http://', adapter)
                 session.mount('https://', adapter)
+                
+                # Set default headers for all requests
+                session.headers.update({
+                    'Connection': 'keep-alive',
+                    'User-Agent': 'Flask-Client/1.0'
+                })
                 
                 self._sessions[host_key] = session
                 logger.debug(f"[SocketManager] Created new session for {host_key}")
@@ -159,7 +166,13 @@ class SocketManager:
             with self._lock:
                 self._stats['streams_opened'] += 1
             
-            response = session.get(url, stream=True, timeout=timeout)
+            # Add headers to maintain connection
+            headers = {
+                'Connection': 'keep-alive',
+                'Keep-Alive': 'timeout=300, max=1000'
+            }
+            
+            response = session.get(url, stream=True, timeout=timeout, headers=headers)
             
             # Track active stream
             with self._lock:

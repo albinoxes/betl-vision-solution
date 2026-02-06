@@ -4,6 +4,7 @@ import cv2
 import numpy as np
 import time
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError
 from computer_vision.ml_model_image_processor import object_process_image, CameraSettings
 from computer_vision.classifier_image_processor import classifier_process_image
 from computer_vision.classifier_processor_thread import get_classifier_processor
@@ -394,15 +395,18 @@ def process_video_stream_background(thread_id, url, model_id=None, classifier_id
             
             try:
                 # Use SocketManager for managed streaming
-                logger.info(f"[Thread {thread_id}] Connecting to video stream...")
-                logger.info(f"[Thread {thread_id}] Connected successfully, starting frame processing")
+                logger.info(f"[Thread {thread_id}] Connecting to video stream: {url}")
                 boundary = b'--frame'
                 buffer = b''
                 MAX_BUFFER_SIZE = 10 * 1024 * 1024  # 10MB max buffer
                 
                 # Process chunks with periodic stop checks using SocketManager
                 chunk_count = 0
+                stream_started = False
                 for chunk in socket_manager.stream(thread_id, url, chunk_size=8192):
+                    if not stream_started:
+                        logger.info(f"[Thread {thread_id}] Connected successfully, receiving frames")
+                        stream_started = True
                     chunk_count += 1
                     
                     # Check stop flag every 5 chunks for faster response on shutdown
@@ -498,17 +502,26 @@ def process_video_stream_background(thread_id, url, model_id=None, classifier_id
                     logger.info(f"[Thread {thread_id}] Timeout during shutdown (expected)")
                 else:
                     logger.error(f"[Error] Timeout in thread {thread_id}: {e}")
+                    logger.error(f"[Error] URL: {url}, Timeout details: {e}")
+                    import traceback
+                    logger.error(f"[Error] Stack trace: {traceback.format_exc()}")
                     thread_manager.set_status(thread_id, 'error: timeout')
                 break
                 
             except requests.exceptions.ConnectionError as e:
                 # Connection error - server might be down
-                logger.error(f"[Error] Connection error in thread {thread_id}: Server unreachable or not running")
+                logger.error(f"[Error] Connection error in thread {thread_id}: {e}")
+                logger.error(f"[Error] URL: {url}")
+                import traceback
+                logger.error(f"[Error] Stack trace: {traceback.format_exc()}")
                 thread_manager.set_status(thread_id, 'error: server unreachable')
                 break
                 
             except Exception as e:
                 logger.error(f"[Error] Unexpected error in thread {thread_id}: {e}")
+                logger.error(f"[Error] URL: {url}")
+                import traceback
+                logger.error(f"[Error] Stack trace: {traceback.format_exc()}")
                 # Check if thread should stop before retrying
                 if not thread_manager.is_running(thread_id):
                     break
@@ -702,31 +715,46 @@ def simulator_video():
     Returns real-time video feed with optional ML processing visualization.
     Does NOT generate CSV files or upload to SFTP.
     """
+    logger.info("[Simulator Video] Request received")
     model_param = request.args.get('model')
     classifier_param = request.args.get('classifier')
     settings_param = request.args.get('settings')
     url = "http://localhost:5003/video/simulator"
     
+    logger.info(f"[Simulator Video] Connecting to: {url}")
+    logger.info(f"[Simulator Video] Model: {model_param}, Classifier: {classifier_param}")
+    
     # If no processing is requested, use simple passthrough with SocketManager
     if not model_param and not classifier_param:
-        return Response(socket_manager.get_stream_generator(url, chunk_size=1024),
-                       mimetype='multipart/x-mixed-replace; boundary=frame')
+        logger.info("[Simulator Video] Using passthrough mode (no ML processing)")
+        try:
+            return Response(socket_manager.get_stream_generator(url, chunk_size=1024),
+                           mimetype='multipart/x-mixed-replace; boundary=frame')
+        except Exception as e:
+            logger.error(f"[Simulator Video] Error in passthrough: {e}")
+            import traceback
+            logger.error(f"[Simulator Video] Traceback: {traceback.format_exc()}")
+            return Response(f"Error connecting to simulator: {e}", status=503)
     
     # Otherwise use processing pipeline for visualization
-    return Response(process_video_stream(url, model_param, classifier_param, settings_param),
-                   mimetype='multipart/x-mixed-replace; boundary=frame')
+    logger.info("[Simulator Video] Using ML processing mode")
+    try:
+        return Response(process_video_stream(url, model_param, classifier_param, settings_param),
+                       mimetype='multipart/x-mixed-replace; boundary=frame')
+    except Exception as e:
+        logger.error(f"[Simulator Video] Error in ML processing: {e}")
+        import traceback
+        logger.error(f"[Simulator Video] Traceback: {traceback.format_exc()}")
+        return Response(f"Error processing simulator video: {e}", status=503)
 
 @camera_bp.route('/connected-devices')
 def connected_devices():
     devices = []
     
-    # Use ThreadPoolExecutor to query all servers in parallel
-    from concurrent.futures import ThreadPoolExecutor, as_completed
-    
     def query_legacy():
         try:
             logger.debug("[Connected Devices] Querying legacy-camera-server (port 5002)...")
-            response = socket_manager.get('http://localhost:5002/devices', timeout=(2, 3))
+            response = socket_manager.get('http://localhost:5002/devices', timeout=(1, 2))
             if response.status_code == 200:
                 result = [{'type': 'legacy', 'id': dev['id'], 'info': dev['info'], 
                         'ip': dev['info'].split(';')[0] if ';' in dev['info'] else 'unknown',
@@ -744,7 +772,7 @@ def connected_devices():
     def query_webcam():
         try:
             logger.debug("[Connected Devices] Querying webcam-server (port 5001)...")
-            response = socket_manager.get('http://localhost:5001/devices', timeout=(2, 3))
+            response = socket_manager.get('http://localhost:5001/devices', timeout=(1, 2))
             if response.status_code == 200:
                 result = [{'type': 'webcam', 'id': dev['id'], 'info': dev['info'],
                         'ip': 'localhost', 'status': dev['status']} for dev in response.json()]
@@ -761,7 +789,7 @@ def connected_devices():
     def query_simulator():
         try:
             logger.debug("[Connected Devices] Querying simulator-server (port 5003)...")
-            response = socket_manager.get('http://localhost:5003/devices', timeout=(2, 3))
+            response = socket_manager.get('http://localhost:5003/devices', timeout=(1, 2))
             if response.status_code == 200:
                 result = [{'type': 'simulator', 'id': dev['id'], 'info': dev['info'],
                         'ip': 'localhost', 'status': dev['status']} for dev in response.json()]
@@ -785,11 +813,17 @@ def connected_devices():
         ]
         
         # Use as_completed with timeout to avoid hanging
-        for future in as_completed(futures, timeout=5):
-            try:
-                devices.extend(future.result())
-            except Exception as e:
-                logger.warning(f"[Connected Devices] Query failed: {e}")
+        try:
+            for future in as_completed(futures, timeout=5):
+                try:
+                    devices.extend(future.result())
+                except Exception as e:
+                    logger.warning(f"[Connected Devices] Query failed: {e}")
+        except TimeoutError:
+            logger.warning("[Connected Devices] Query timeout - returning partial results")
+            # Cancel any pending futures
+            for future in futures:
+                future.cancel()
     
     logger.debug(f"[Connected Devices] Total devices found: {len(devices)}")
     return jsonify(devices)
@@ -853,14 +887,20 @@ def start_thread():
     
     # Check if the server is reachable before starting thread (quick check)
     try:
+        logger.info(f"[Start Thread] Checking server availability: {server_check_url}")
         check_response = socket_manager.get(server_check_url, timeout=(1, 2))
         if check_response.status_code != 200:
+            logger.error(f"[Start Thread] Server check failed with status {check_response.status_code}")
             return jsonify({'error': f'{device_type.capitalize()} server is not responding properly (status {check_response.status_code})'}), 503
-    except requests.exceptions.ConnectionError:
+        logger.info(f"[Start Thread] Server check OK for {device_type}")
+    except requests.exceptions.ConnectionError as e:
+        logger.error(f"[Start Thread] Connection error to {server_check_url}: {e}")
         return jsonify({'error': f'{device_type.capitalize()} server on {server_check_url} is not running or unreachable'}), 503
-    except requests.exceptions.Timeout:
+    except requests.exceptions.Timeout as e:
+        logger.error(f"[Start Thread] Timeout connecting to {server_check_url}: {e}")
         return jsonify({'error': f'{device_type.capitalize()} server is not responding (timeout)'}), 503
     except Exception as e:
+        logger.error(f"[Start Thread] Error checking {server_check_url}: {e}")
         return jsonify({'error': f'Cannot connect to {device_type} server: {str(e)}'}), 503
     
     # Create metadata for the thread
