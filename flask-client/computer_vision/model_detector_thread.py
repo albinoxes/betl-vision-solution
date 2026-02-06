@@ -1,6 +1,8 @@
-"""
-Model Detector Thread - Dedicated thread for object detection processing.
+"""!
+@file model_detector_thread.py
+@brief Model Detector Thread - Dedicated thread for object detection processing.
 
+@details
 This module provides a queue-based object detection system that runs in a separate thread.
 It ensures that model detection doesn't block the camera frame processing thread.
 
@@ -10,6 +12,9 @@ Key Features:
 - Graceful shutdown: Properly stops when application exits
 - Thread-safe: Uses queue.Queue for thread-safe communication
 - Memory efficient: Limits queue size to prevent memory issues
+
+@author Belt Vision Team
+@date 2026-02-06
 """
 
 import threading
@@ -25,24 +30,33 @@ logger = get_logger()
 
 
 class DetectionRequest:
-    """Represents a single frame detection request."""
+    """!
+    @brief Represents a single frame detection request.
+    
+    @details
+    This class encapsulates all information needed to process a frame through
+    the object detection pipeline. It includes the frame data, model configuration,
+    and callback mechanisms for asynchronous processing.
+    """
     
     def __init__(self, frame: np.ndarray, model, settings, model_id: str, 
                  timestamp: datetime, image_filename: str, project_settings, 
                  sftp_server_info, callback: Optional[Callable[[Any], None]] = None):
-        """
-        Initialize a detection request.
+        """!
+        @brief Initialize a detection request.
         
-        Args:
-            frame: Frame image data (numpy array)
-            model: Loaded detection model
-            settings: Camera settings for detection
-            model_id: Model identifier
-            timestamp: Processing timestamp
-            image_filename: Reference to saved image file
-            project_settings: Project settings for CSV generation
-            sftp_server_info: SFTP server configuration
-            callback: Optional callback function called with detection result
+        @param frame Frame image data as numpy array
+        @param model Loaded YOLO detection model instance
+        @param settings Camera settings object for detection configuration
+        @param model_id Unique identifier for the detection model
+        @param timestamp Processing timestamp (datetime object)
+        @param image_filename Reference path to saved image file
+        @param project_settings Project settings for CSV generation and metadata
+        @param sftp_server_info SFTP server configuration for file uploads
+        @param callback Optional callback function called with detection result (default: None)
+        
+        @note The frame is copied when queued to avoid data corruption from concurrent access.
+        @see ModelDetectorThread.queue_detection()
         """
         self.frame = frame
         self.model = model
@@ -57,19 +71,36 @@ class DetectionRequest:
 
 
 class ModelDetectorThread:
-    """
-    Manages object detection processing in a dedicated background thread.
+    """!
+    @brief Manages object detection processing in a dedicated background thread.
     
-    This class handles all frame detection asynchronously using a queue.
-    Detection requests are queued and processed one at a time in the background.
+    @details
+    This class handles all frame detection asynchronously using a queue-based system.
+    Detection requests are queued and processed one at a time in the background thread,
+    preventing object detection inference from blocking the camera frame processing.
+    
+    Thread Safety:
+    - Uses queue.Queue for thread-safe communication
+    - Threading.Lock protects statistics and state
+    - Event-based shutdown for graceful termination
+    
+    Queue Management:
+    - Maximum queue size: 50 frames
+    - Frames dropped when queue is full
+    - Remaining frames processed during shutdown
+    
+    @note This class follows the singleton pattern via get_model_detector()
+    @see get_model_detector()
     """
     
     def __init__(self, thread_id: str = "model_detector"):
-        """
-        Initialize the model detector thread.
+        """!
+        @brief Initialize the model detector thread.
         
-        Args:
-            thread_id: Unique identifier for the thread
+        @param thread_id Unique identifier for the thread (default: "model_detector")
+        
+        @note Creates queue with maxsize=50 to prevent memory issues
+        @note Statistics tracking includes: total_queued, total_processed, total_failed, total_dropped
         """
         self.thread_id = thread_id
         self._detection_queue = queue.Queue(maxsize=50)  # Limit to prevent memory issues
@@ -88,11 +119,21 @@ class ModelDetectorThread:
         }
     
     def start(self) -> bool:
-        """
-        Start the model detector thread.
+        """!
+        @brief Start the model detector thread.
         
-        Returns:
-            bool: True if started successfully, False if already running
+        @return True if started successfully, False if already running
+        
+        @note Thread runs as daemon and starts the _detector_worker() method
+        @warning Calling start() when already running will return False
+        
+        @code{.py}
+        detector = get_model_detector()
+        if detector.start():
+            print("Model detector started successfully")
+        @endcode
+        
+        @see stop(), _detector_worker()
         """
         with self._lock:
             if self._running:
@@ -114,14 +155,26 @@ class ModelDetectorThread:
             return True
     
     def stop(self, timeout: float = 10.0) -> bool:
-        """
-        Stop the model detector thread gracefully.
+        """!
+        @brief Stop the model detector thread gracefully.
         
-        Args:
-            timeout: Maximum time to wait for thread to stop (seconds)
-            
-        Returns:
-            bool: True if stopped successfully
+        @param timeout Maximum time to wait for thread to stop in seconds (default: 10.0)
+        
+        @return True if stopped successfully, False if timeout occurred
+        
+        @note Processes remaining frames in queue before shutting down
+        @note Logs final statistics upon successful shutdown
+        @warning If thread doesn't stop within timeout, returns False but thread may still be running
+        
+        @code{.py}
+        detector = get_model_detector()
+        if detector.stop(timeout=15.0):
+            print("Model detector stopped cleanly")
+        else:
+            print("Model detector did not stop within timeout")
+        @endcode
+        
+        @see start(), _detector_worker()
         """
         with self._lock:
             if not self._running:
@@ -148,22 +201,36 @@ class ModelDetectorThread:
     def queue_detection(self, frame: np.ndarray, model, settings, model_id: str,
                        timestamp: datetime, image_filename: str, project_settings, 
                        sftp_server_info, callback: Optional[Callable[[Any], None]] = None) -> bool:
-        """
-        Queue a frame for object detection.
+        """!
+        @brief Queue a frame for object detection.
         
-        Args:
-            frame: Frame image data (numpy array)
-            model: Loaded detection model
-            settings: Camera settings for detection
-            model_id: Model identifier
-            timestamp: Processing timestamp
-            image_filename: Reference to saved image file
-            project_settings: Project settings for CSV generation
-            sftp_server_info: SFTP server configuration
-            callback: Optional callback function called with detection result
-            
-        Returns:
-            bool: True if queued successfully, False if queue is full or thread not running
+        @param frame Frame image data as numpy array
+        @param model Loaded YOLO detection model instance
+        @param settings Camera settings object for detection configuration
+        @param model_id Unique identifier for the detection model
+        @param timestamp Processing timestamp (datetime object)
+        @param image_filename Reference path to saved image file
+        @param project_settings Project settings for CSV generation and metadata
+        @param sftp_server_info SFTP server configuration for file uploads
+        @param callback Optional callback function called with detection result (default: None)
+        
+        @return True if queued successfully, False if queue is full or thread not running
+        
+        @note Frame is copied to avoid data corruption from concurrent modifications
+        @note Uses put_nowait() - returns False immediately if queue is full
+        @warning Returns False if thread is not running - call start() first
+        @warning Increments total_dropped statistic when queue is full
+        
+        @code{.py}
+        detector = get_model_detector()
+        if detector.queue_detection(frame, model, settings, model_id, 
+                                   datetime.now(), img_path, project_cfg, sftp_cfg):
+            print("Detection queued successfully")
+        else:
+            print("Failed to queue - queue full or thread not running")
+        @endcode
+        
+        @see DetectionRequest, _detector_worker()
         """
         if not self._running:
             logger.warning(f"[{self.thread_id}] Cannot queue detection - thread not running")
@@ -201,10 +268,32 @@ class ModelDetectorThread:
             return False
     
     def _detector_worker(self):
-        """
-        Worker function that processes the detection queue.
+        """!
+        @brief Worker function that processes the detection queue.
         
-        This runs in a separate thread and detects objects in frames one at a time.
+        @details
+        This method runs in a separate thread and processes detection requests one at a time.
+        It continuously polls the queue for new requests and performs object detection using
+        the ml_model_image_processor module.
+        
+        Processing Flow:
+        1. Wait for detection request from queue (1 second timeout)
+        2. Run object detection via object_process_image()
+        3. Extract particles_to_detect (index 2) for CSV generation
+        4. Queue CSV generation with SFTP upload callback
+        5. Update statistics and call custom callback if provided
+        6. Clean up frame data to free memory
+        
+        Shutdown Behavior:
+        - Processes remaining frames in queue before exiting
+        - Logs final statistics
+        - Ensures graceful cleanup of resources
+        
+        @note Runs until _stop_event is set
+        @note Uses 1 second timeout to periodically check stop event
+        @warning Import statements inside method to avoid circular dependencies
+        
+        @see queue_detection(), object_process_image(), create_model_csv_callback()
         """
         # Import here to avoid circular dependencies
         from computer_vision.ml_model_image_processor import object_process_image
@@ -331,21 +420,42 @@ class ModelDetectorThread:
         logger.info(f"[{self.thread_id}] Worker stopped")
     
     def get_stats(self) -> Dict[str, Any]:
-        """
-        Get current statistics about the model detector thread.
+        """!
+        @brief Get current statistics about the model detector thread.
         
-        Returns:
-            dict: Statistics including queue size, processing counts, etc.
+        @return Dictionary containing statistics:
+                - total_queued: Total frames queued for detection
+                - total_processed: Total frames successfully processed
+                - total_failed: Total frames that failed processing
+                - total_dropped: Total frames dropped due to full queue
+                - queue_size: Current number of frames in queue
+        
+        @note Thread-safe: uses lock to ensure consistent snapshot
+        @note Returns a copy of statistics to prevent external modification
+        
+        @code{.py}
+        detector = get_model_detector()
+        stats = detector.get_stats()
+        print(f"Queue size: {stats['queue_size']}")
+        print(f"Success rate: {stats['total_processed']}/{stats['total_queued']}")
+        @endcode
         """
         with self._lock:
             return self._stats.copy()
     
     def is_running(self) -> bool:
-        """
-        Check if the model detector thread is running.
+        """!
+        @brief Check if the model detector thread is running.
         
-        Returns:
-            bool: True if running, False otherwise
+        @return True if running, False otherwise
+        
+        @note Thread-safe: uses lock to check running state
+        
+        @code{.py}
+        detector = get_model_detector()
+        if not detector.is_running():
+            detector.start()
+        @endcode
         """
         with self._lock:
             return self._running
@@ -357,11 +467,25 @@ _instance_lock = threading.Lock()
 
 
 def get_model_detector() -> ModelDetectorThread:
-    """
-    Get the global model detector singleton instance.
+    """!
+    @brief Get the global model detector singleton instance.
     
-    Returns:
-        ModelDetectorThread: The global model detector instance
+    @return The global ModelDetectorThread singleton instance
+    
+    @note Thread-safe: uses double-checked locking pattern
+    @note Creates instance on first call (lazy initialization)
+    @warning Always use this function instead of creating ModelDetectorThread() directly
+    
+    @code{.py}
+    # Correct usage - get singleton instance
+    detector = get_model_detector()
+    detector.start()
+    
+    # Incorrect - creates separate instance
+    # detector = ModelDetectorThread()  # DON'T DO THIS
+    @endcode
+    
+    @see ModelDetectorThread
     """
     global _model_detector_instance
     
