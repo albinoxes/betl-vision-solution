@@ -111,24 +111,7 @@ class CsvWriterThread(BaseQueueThread):
         # Use base class queue_item method
         return self.queue_item(request)
     
-    def _csv_worker(self):
-        """
-        Worker function that processes the CSV generation queue.
-        
-        This runs in a separate thread and generates CSV files one at a time.
-        """
-        # Import here to avoid circular dependencies
-        from iris_communication.iris_input_processor import iris_input_processor
-        
-        logger.info(f"[{self.thread_id}] Worker started, waiting for CSV generation requests...")
-        
-        while not self._stop_event.is_set():
-            try:
-                # Wait for CSV generation request with timeout to check stop event periodically
-                try:
-                    request = self._csv_queue.get(timeout=1.0)
-                except queue.Empty:
-         process_item(self, request: CsvGenerationRequest):
+    def _process_item(self, request: CsvGenerationRequest):
         """
         Process a single CSV generation request.
         
@@ -163,7 +146,24 @@ class CsvWriterThread(BaseQueueThread):
             try:
                 request.callback(csv_path)
             except Exception as e:
-                logger.error(f"[{self.thread_id}] Error in callback: {e}")one:
+                logger.error(f"[{self.thread_id}] Error in callback: {e}")
+
+
+# Global singleton instance
+_csv_writer_instance = None
+_instance_lock = threading.Lock()
+
+
+def get_csv_writer() -> CsvWriterThread:
+    """
+    Get the global CSV writer singleton instance.
+    
+    Returns:
+        CsvWriterThread: The global CSV writer instance
+    """
+    global _csv_writer_instance
+    
+    if _csv_writer_instance is None:
         with _instance_lock:
             if _csv_writer_instance is None:
                 _csv_writer_instance = CsvWriterThread()
