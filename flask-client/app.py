@@ -11,6 +11,7 @@ from infrastructure.monitoring import HealthMonitoringService, ServerConfig
 from iris_communication.csv_writer_thread import get_csv_writer
 from iris_communication.sftp_uploader_thread import get_sftp_uploader
 from computer_vision.classifier_processor_thread import get_classifier_processor
+from computer_vision.model_detector_thread import get_model_detector
 import signal
 import atexit
 
@@ -23,6 +24,11 @@ logger = get_logger()
 csv_writer = get_csv_writer()
 csv_writer.start()
 logger.info("CSV writer thread started")
+
+# Initialize and start model detector thread
+model_detector = get_model_detector()
+model_detector.start()
+logger.info("Model detector thread started")
 
 # Initialize and start classifier processor thread
 classifier_processor = get_classifier_processor()
@@ -105,6 +111,13 @@ def cleanup_threads():
     thread_manager = get_thread_manager()
     thread_manager.stop_all_threads(timeout=10.0)
     
+    # Stop model detector thread (finishes pending detections)
+    model_detector = get_model_detector()
+    if model_detector.is_running():
+        logger.info("Stopping model detector thread...")
+        model_detector.stop(timeout=10.0)
+        logger.info("Model detector thread stopped")
+    
     # Stop classifier processor thread (finishes pending classifications)
     classifier_processor = get_classifier_processor()
     if classifier_processor.is_running():
@@ -163,6 +176,10 @@ signal.signal(signal.SIGINT, signal_handler)
 # Register cleanup on exit
 def cleanup_on_exit():
     try:
+        # Stop model detector
+        model_detector = get_model_detector()
+        if model_detector.is_running():
+            model_detector.stop(timeout=5.0)
         # Stop classifier processor
         classifier_processor = get_classifier_processor()
         if classifier_processor.is_running():

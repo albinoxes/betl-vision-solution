@@ -7,6 +7,7 @@ from datetime import datetime
 from computer_vision.ml_model_image_processor import object_process_image, CameraSettings
 from computer_vision.classifier_image_processor import classifier_process_image
 from computer_vision.classifier_processor_thread import get_classifier_processor
+from computer_vision.model_detector_thread import get_model_detector
 from storage_data.store_data_manager import store_data_manager
 from sqlite.video_stream_sqlite_provider import video_stream_provider
 from iris_communication.iris_input_processor import iris_input_processor
@@ -19,13 +20,14 @@ from infrastructure.thread_manager import get_thread_manager
 from infrastructure.socket_manager import get_socket_manager
 import atexit
 
-# Initialize logger, thread manager, socket manager, CSV writer, SFTP uploader, and classifier processor
+# Initialize logger, thread manager, socket manager, CSV writer, SFTP uploader, classifier processor, and model detector
 logger = get_logger()
 thread_manager = get_thread_manager()
 socket_manager = get_socket_manager()
 csv_writer = get_csv_writer()
 sftp_uploader = get_sftp_uploader()
 classifier_processor = get_classifier_processor()
+model_detector = get_model_detector()
 
 CAMERA_URL = "http://localhost:5001/video"
 
@@ -282,36 +284,29 @@ def process_video_stream_background(thread_id, url, model_id=None, classifier_id
                                     # Check if processing interval has elapsed
                                     current_time = time.time()
                                     if current_time - last_model_processing_time >= processing_interval:
-                                        logger.debug(f"[Processing] Model processing frame at {current_time:.2f}, interval: {current_time - last_model_processing_time:.2f}s")
+                                        logger.debug(f"[Processing] Queuing frame for model detection at {current_time:.2f}, interval: {current_time - last_model_processing_time:.2f}s")
                                         try:
                                             # Increment frame count for processed frame
                                             frame_count += 1
                                             # Use processing time for CSV timestamp
                                             processing_timestamp = datetime.now()
-                                            result = object_process_image(img2d.copy(), model=model, settings=settings)
                                             
-                                            # result format: [image, xyxy, particles_to_detect, particles_to_save]
-                                            # Use particles_to_detect (index 2) for CSV/reporting
-                                            result_for_csv = [result[0], result[1], result[2]]
-                                            
-                                            # Queue CSV generation with callback (non-blocking)
-                                            csv_writer.queue_csv_generation(
-                                                project_settings=project_settings,
+                                            # Queue frame for detection (non-blocking)
+                                            model_detector.queue_detection(
+                                                frame=img2d,
+                                                model=model,
+                                                settings=settings,
+                                                model_id=model_id,
                                                 timestamp=processing_timestamp,
-                                                data=result_for_csv,
-                                                folder_type='model',
                                                 image_filename=filename,
-                                                callback=create_model_csv_callback(
-                                                    sftp_server_info, 
-                                                    project_settings, 
-                                                    previous_model_csv_tracker
-                                                )
+                                                project_settings=project_settings,
+                                                sftp_server_info=sftp_server_info
                                             )
                                             
                                             # Update last processing time
                                             last_model_processing_time = current_time
                                         except Exception as e:
-                                            logger.error(f"Error processing with model: {e}")
+                                            logger.error(f"Error queuing model detection: {e}")
                                 
                                 if classifier_id:
                                     # Check if processing interval has elapsed
@@ -839,6 +834,17 @@ def get_csv_writer_stats():
     """Get CSV writer thread statistics."""
     stats = csv_writer.get_stats()
     is_running = csv_writer.is_running()
+    
+    return jsonify({
+        'running': is_running,
+        'stats': stats
+    })
+
+@camera_bp.route('/model-detector-stats')
+def get_model_detector_stats():
+    """Get model detector thread statistics."""
+    stats = model_detector.get_stats()
+    is_running = model_detector.is_running()
     
     return jsonify({
         'running': is_running,
