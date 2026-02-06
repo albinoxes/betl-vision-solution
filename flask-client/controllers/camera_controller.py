@@ -424,12 +424,13 @@ def process_video_stream_background(thread_id, url, model_id=None, classifier_id
                         img2d = _extract_jpeg_from_frame(frame_data)
                         
                     if img2d is not None:
+                            # Generate timestamp and filename for this frame
+                            timestamp = datetime.now()
+                            filename = f"frame_{timestamp.strftime('%Y%m%d_%H%M%S_%f')}.jpg"
+                            
                             # Save frame to storage directory and database at the same interval as processing
                             current_time = time.time()
                             if current_time - last_frame_save_time >= processing_interval:
-                                timestamp = datetime.now()
-                                filename = f"frame_{timestamp.strftime('%Y%m%d_%H%M%S_%f')}.jpg"
-                                _save_frame_to_storage(img2d, thread_id, project_title, timestamp, filename)
                                 last_frame_save_time = current_time
                             
                             # Lazy-load model only when we need to process
