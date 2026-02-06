@@ -8,15 +8,37 @@ from controllers.detection_model_settings_controller import detection_model_sett
 from controllers.health_controller import health_bp
 from infrastructure.logging.logging_provider import get_logger
 from infrastructure.monitoring import HealthMonitoringService, ServerConfig
+from iris_communication.csv_writer_thread import get_csv_writer
+from iris_communication.sftp_uploader_thread import get_sftp_uploader
+from computer_vision.classifier_processor_thread import get_classifier_processor
+from computer_vision.model_detector_thread import get_model_detector
 import signal
-import sys
 import atexit
 
 app = Flask(__name__)
 
-# Initialize logging provider
+# Initialize logging provider (auto-starts on first use)
 logger = get_logger()
-logger.start()
+
+# Initialize and start CSV writer thread
+csv_writer = get_csv_writer()
+csv_writer.start()
+logger.info("CSV writer thread started")
+
+# Initialize and start model detector thread
+model_detector = get_model_detector()
+model_detector.start()
+logger.info("Model detector thread started")
+
+# Initialize and start classifier processor thread
+classifier_processor = get_classifier_processor()
+classifier_processor.start()
+logger.info("Classifier processor thread started")
+
+# Initialize and start SFTP uploader thread
+sftp_uploader = get_sftp_uploader()
+sftp_uploader.start()
+logger.info("SFTP uploader thread started")
 
 # Initialize health monitoring service
 health_service = HealthMonitoringService()
@@ -79,49 +101,74 @@ def index():
 
 def cleanup_threads():
     """Stop all active threads gracefully"""
-    from controllers.camera_controller import active_threads, thread_lock
+    from infrastructure.thread_manager import get_thread_manager
+    from infrastructure.socket_manager import get_socket_manager
+    import gc
     
     logger.info("\nShutting down... stopping all active threads")
     
-    with thread_lock:
-        thread_ids = list(active_threads.keys())
+    # Stop camera processing threads first
+    thread_manager = get_thread_manager()
+    thread_manager.stop_all_threads(timeout=10.0)
     
-    for thread_id in thread_ids:
-        logger.info(f"Stopping thread: {thread_id}")
-        
-        with thread_lock:
-            if thread_id in active_threads:
-                active_threads[thread_id]['running'] = False
-                active_threads[thread_id]['status'] = 'stopping'
-                session_obj = active_threads[thread_id].get('session')
-                thread_obj = active_threads[thread_id].get('thread')
-        
-        # Close session to interrupt blocking reads
-        if session_obj:
-            try:
-                session_obj.close()
-            except Exception as e:
-                logger.error(f"Error closing session for {thread_id}: {e}")
-        
-        # Wait for thread to stop
-        if thread_obj and thread_obj.is_alive():
-            thread_obj.join(timeout=2)
-            if thread_obj.is_alive():
-                logger.warning(f"Warning: Thread {thread_id} did not stop gracefully")
+    # Stop model detector thread (finishes pending detections)
+    model_detector = get_model_detector()
+    if model_detector.is_running():
+        logger.info("Stopping model detector thread...")
+        model_detector.stop(timeout=10.0)
+        logger.info("Model detector thread stopped")
     
-    logger.info("All threads stopped. Exiting...")
+    # Stop classifier processor thread (finishes pending classifications)
+    classifier_processor = get_classifier_processor()
+    if classifier_processor.is_running():
+        logger.info("Stopping classifier processor thread...")
+        classifier_processor.stop(timeout=10.0)
+        logger.info("Classifier processor thread stopped")
+    
+    # Stop CSV writer thread (finishes pending CSV generations)
+    csv_writer = get_csv_writer()
+    if csv_writer.is_running():
+        logger.info("Stopping CSV writer thread...")
+        csv_writer.stop(timeout=10.0)
+        logger.info("CSV writer thread stopped")
+    
+    # Stop SFTP uploader thread last (uploads any remaining CSVs)
+    sftp_uploader = get_sftp_uploader()
+    if sftp_uploader.is_running():
+        logger.info("Stopping SFTP uploader thread...")
+        sftp_uploader.stop(timeout=15.0)  # Give extra time for remaining uploads
+        logger.info("SFTP uploader thread stopped")
+    
+    logger.info("All threads stopped. Cleaning up resources...")
+    
+    # Close all socket connections
+    socket_manager = get_socket_manager()
+    socket_manager.shutdown()
+    logger.info("All socket connections closed")
     
     # Stop health monitoring
     health_service.stop_all()
     
-    # Stop logger
+    # Force garbage collection to free memory
+    collected = gc.collect()
+    logger.info(f"Garbage collection freed {collected} objects")
+    
+    logger.info("Cleanup complete. Safe to exit.")
+    
+    # Stop logger (this flushes remaining logs and closes handlers)
     logger.stop()
 
 def signal_handler(sig, frame):
     """Handle Ctrl-C signal"""
     print("\n\nReceived interrupt signal, shutting down...")
-    cleanup_threads()
-    sys.exit(0)
+    try:
+        cleanup_threads()
+    except Exception as e:
+        print(f"Error during cleanup: {e}")
+    finally:
+        print("Forcing exit...")
+        import os
+        os._exit(0)  # Force exit without waiting for cleanup
 
 # Register signal handler for Ctrl-C BEFORE starting Flask
 signal.signal(signal.SIGINT, signal_handler)
@@ -129,6 +176,23 @@ signal.signal(signal.SIGINT, signal_handler)
 # Register cleanup on exit
 def cleanup_on_exit():
     try:
+        # Stop model detector
+        model_detector = get_model_detector()
+        if model_detector.is_running():
+            model_detector.stop(timeout=5.0)
+        # Stop classifier processor
+        classifier_processor = get_classifier_processor()
+        if classifier_processor.is_running():
+            classifier_processor.stop(timeout=5.0)
+        # Stop CSV writer
+        csv_writer = get_csv_writer()
+        if csv_writer.is_running():
+            csv_writer.stop(timeout=5.0)
+        # Stop SFTP uploader
+        sftp_uploader = get_sftp_uploader()
+        if sftp_uploader.is_running():
+            sftp_uploader.stop(timeout=5.0)
+        # Stop health service and logger
         health_service.stop_all()
         logger.stop()
     except:

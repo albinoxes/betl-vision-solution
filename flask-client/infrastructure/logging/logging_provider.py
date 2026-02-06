@@ -1,134 +1,231 @@
+##
+# @file logging_provider.py
+# @brief Logging provider module for Belt Vision application
+# @details This module provides efficient logging using Python's standard logging library
+#          with async queue-based handlers, rotating files, and custom formatting.
+# @author Belt Vision Team
+# @date 2026-02-06
+
 import logging
 import threading
-import inspect
+import queue
+import atexit
 from datetime import datetime
 from pathlib import Path
-from logging.handlers import RotatingFileHandler
+from logging.handlers import RotatingFileHandler, QueueHandler, QueueListener
+
+# Module-level variables for the logging system
+_logger = None
+_queue_listener = None
+_file_handler = None
+_log_queue = None
+_listener_started = False
+_init_lock = threading.Lock()
+_log_file_path = None
 
 
-class LoggingProvider:
+def _initialize_logging():
     """
-    Singleton logging provider using Python's logging library.
-    Creates rotating log files with custom formatting.
+    Initialize the global logging system.
+    This function is called once and sets up the entire logging infrastructure.
+    Thread-safe initialization using double-checked locking.
     """
-    _instance = None
-    _lock = threading.Lock()
-
-    def __new__(cls):
-        if cls._instance is None:
-            with cls._lock:
-                if cls._instance is None:
-                    cls._instance = super(LoggingProvider, cls).__new__(cls)
-                    cls._instance._initialized = False
-        return cls._instance
-
-    def __init__(self):
-        if self._initialized:
-            return
+    global _logger, _queue_listener, _file_handler, _log_queue, _listener_started, _log_file_path
+    
+    if _logger is not None:
+        return _logger
+    
+    with _init_lock:
+        # Double-check pattern
+        if _logger is not None:
+            return _logger
         
-        self._initialized = True
+        # Setup logs directory
+        logs_dir = Path(__file__).parent.parent.parent / 'logs'
+        logs_dir.mkdir(exist_ok=True)
         
-        # Create logs directory if it doesn't exist
-        self._logs_dir = Path(__file__).parent.parent.parent / 'logs'
-        self._logs_dir.mkdir(exist_ok=True)
-        
-        # Create log file with current timestamp
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        self._log_file_path = self._logs_dir / f'logs_{timestamp}.txt'
+        _log_file_path = logs_dir / f'logs_{timestamp}.txt'
         
-        # Create logger
-        self._logger = logging.getLogger('BeltVisionApp')
-        self._logger.setLevel(logging.DEBUG)
+        # Configure root logger for the application
+        _logger = logging.getLogger('BeltVisionApp')
+        _logger.setLevel(logging.DEBUG)
+        _logger.propagate = False  # Don't propagate to root logger
         
-        # Prevent duplicate handlers
-        if self._logger.handlers:
-            self._logger.handlers.clear()
+        # Clear any existing handlers
+        _logger.handlers.clear()
         
-        # Create rotating file handler (10MB max, keep 5 backup files)
-        file_handler = RotatingFileHandler(
-            self._log_file_path,
+        # Create rotating file handler
+        _file_handler = RotatingFileHandler(
+            _log_file_path,
             maxBytes=10*1024*1024,  # 10 MB
             backupCount=5,
             encoding='utf-8'
         )
-        file_handler.setLevel(logging.DEBUG)
+        _file_handler.setLevel(logging.DEBUG)
+        _file_handler.setFormatter(CustomFormatter())
         
-        # Create custom formatter
-        formatter = CustomFormatter()
-        file_handler.setFormatter(formatter)
+        # Create unbounded queue for async logging (no blocking)
+        # Using unbounded queue to prevent application blocking
+        _log_queue = queue.Queue()
         
-        # Add handler to logger
-        self._logger.addHandler(file_handler)
+        # Create QueueHandler - this is what the application uses (non-blocking)
+        queue_handler = QueueHandler(_log_queue)
+        _logger.addHandler(queue_handler)
         
-    def start(self):
-        """Start the logging (for compatibility with old interface)."""
-        self._logger.info(f"Logging started - Log file: {self._log_file_path}")
+        # Create QueueListener - processes logs in background thread
+        _queue_listener = QueueListener(
+            _log_queue,
+            _file_handler,
+            respect_handler_level=True
+        )
+        
+        # Start the queue listener immediately
+        _queue_listener.start()
+        _listener_started = True
+        
+        # Register cleanup on exit
+        atexit.register(_cleanup_logging)
+        
+        _logger.info(f"Logging system initialized - Log file: {_log_file_path}")
+        
+        return _logger
+
+
+def _cleanup_logging():
+    """
+    Cleanup the logging system.
+    Stops the queue listener, flushes logs, and closes file handlers.
+    """
+    global _queue_listener, _file_handler, _log_queue, _listener_started, _logger
+    
+    if _listener_started and _queue_listener:
+        try:
+            # Stop the queue listener (this waits for remaining logs to be written)
+            _queue_listener.stop()
+            _listener_started = False
+            
+            # Flush and close file handler
+            if _file_handler:
+                _file_handler.flush()
+                _file_handler.close()
+            
+            # Clear the queue to free memory
+            if _log_queue:
+                while not _log_queue.empty():
+                    try:
+                        _log_queue.get_nowait()
+                    except queue.Empty:
+                        break
+                        
+        except Exception as e:
+            print(f"Error during logging cleanup: {e}")
+
+
+##
+# @class LoggingWrapper
+# @brief Wrapper class providing a convenient interface to the logging system
+# @details Provides methods like info(), error(), warning(), debug() that delegate
+#          to the underlying Python logger. This class is lightweight and doesn't
+#          maintain state - all state is in the module-level logger.
+class LoggingWrapper:
+    """
+    Lightweight wrapper around the standard Python logger.
+    This class is stateless and just provides a convenient API.
+    """
+    
+    def __init__(self):
+        """Initialize the wrapper - ensures logging system is initialized."""
+        _initialize_logging()
     
     def log(self, message):
-        """
-        Add a log message without a specific level.
-        
-        Args:
-            message: The message to log
-        """
-        self._logger.info(message)
+        """Log an info message."""
+        _logger.info(message)
     
     def info(self, message):
         """Log an info message."""
-        self._logger.info(message)
+        _logger.info(message)
     
-    def error(self, message):
-        """Log an error message."""
-        self._logger.error(message)
+    def error(self, message, exc_info=False):
+        """Log an error message with optional exception info."""
+        _logger.error(message, exc_info=exc_info)
     
     def warning(self, message):
         """Log a warning message."""
-        self._logger.warning(message)
+        _logger.warning(message)
     
     def debug(self, message):
         """Log a debug message."""
-        self._logger.debug(message)
+        _logger.debug(message)
+    
+    def start(self):
+        """Start logging - for backward compatibility (no-op as listener auto-starts)."""
+        pass
     
     def stop(self):
-        """Stop the logging and flush handlers."""
-        self._logger.info("Logging stopped")
-        for handler in self._logger.handlers:
-            handler.flush()
-            handler.close()
-
-
-class CustomFormatter(logging.Formatter):
-    """
-    Custom formatter that outputs logs in the format:
-    [YYYY-MM-DD HH:MM:SS] [LEVEL] [ThreadName] [module.function] message
-    """
+        """Stop the logging service."""
+        _logger.info("Logging service stopping...")
+        _cleanup_logging()
     
+    def get_queue_size(self):
+        """Get current queue size for monitoring."""
+        return _log_queue.qsize() if _log_queue else 0
+    
+    def get_stats(self):
+        """Get logging statistics."""
+        return {
+            'queue_size': _log_queue.qsize() if _log_queue else 0,
+            'queue_maxsize': 0,  # Unbounded
+            'log_file': str(_log_file_path) if _log_file_path else None,
+            'listener_running': _listener_started
+        }
+
+
+# Legacy class name for backward compatibility
+LoggingProvider = LoggingWrapper
+
+##
+# @class CustomFormatter
+# @brief Custom log formatter for structured log output
+# @details Extends logging.Formatter to provide a custom format:
+#          [YYYY-MM-DD HH:MM:SS] [LEVEL] [ThreadName] [module.function] message
+#          Includes exception information when available.
+class CustomFormatter(logging.Formatter):
+    ##
+    # @brief Format a log record
+    # @details Formats the log record with timestamp, level, thread name, module/function,
+    #          and message. Appends exception information if present in the record.
+    # @param record The LogRecord instance to format
+    # @return Formatted log string
     def format(self, record):
-        # Get timestamp
         timestamp = datetime.fromtimestamp(record.created).strftime('%Y-%m-%d %H:%M:%S')
-        
-        # Get level
         level = record.levelname
-        
-        # Get thread name
         thread_name = record.threadName
-        
-        # Get caller information (module.function)
         module_name = Path(record.pathname).stem
         function_name = record.funcName
-        
-        # Build log entry
         log_entry = f"[{timestamp}] [{level}] [{thread_name}] [{module_name}.{function_name}] {record.getMessage()}"
         
-        # Add exception info if present
         if record.exc_info:
             log_entry += '\n' + self.formatException(record.exc_info)
         
         return log_entry
 
 
-# Convenience function to get the singleton instance
+##
+# @brief Get the LoggingWrapper instance
+# @details Convenience function to obtain a logging wrapper instance.
+#          The wrapper is lightweight and stateless - all state is in the module-level logger.
+# @return A LoggingWrapper instance
 def get_logger():
-    """Get the singleton LoggingProvider instance."""
-    return LoggingProvider()
+    """
+    Get a logger instance for the Belt Vision application.
+    
+    This function returns a lightweight wrapper around the centralized logging system.
+    The wrapper is stateless and can be created multiple times without overhead.
+    All log messages go through the same queue-based async logging infrastructure.
+    
+    Returns:
+        LoggingWrapper: A lightweight logging wrapper
+    """
+    return LoggingWrapper()
 
