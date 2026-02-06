@@ -1,16 +1,12 @@
-"""
-Classifier Processor Thread - Dedicated thread for belt status classification.
-
-This module provides a queue-based classification system that runs in a separate thread.
-It ensures that classifier processing doesn't block the camera frame processing thread.
-
-Key Features:
-- Single responsibility: Only processes frames with classifiers
-- Queue-based: Classification requests are queued and processed asynchronously
-- Graceful shutdown: Properly stops when application exits
-- Thread-safe: Uses queue.Queue for thread-safe communication
-- Memory efficient: Limits queue size to prevent memory issues
-"""
+## @file classifier_processor_thread.py
+#  @brief Classifier processor thread for asynchronous belt status classification.
+#
+#  This module provides a dedicated thread for processing belt classification requests
+#  asynchronously. It uses a queue-based system to prevent blocking the camera frame
+#  processing thread and ensures memory-efficient operation with configurable limits.
+#
+#  @author Belt Vision Team
+#  @date 2026
 
 import threading
 import queue
@@ -25,21 +21,26 @@ logger = get_logger()
 
 
 class ClassificationRequest:
-    """Represents a single frame classification request."""
+    """@brief Represents a single frame classification request.
+    
+    This class encapsulates all the data needed to perform a classification operation
+    on a single frame, including the frame data, classifier settings, and callback
+    information for post-processing.
+    """
     
     def __init__(self, frame: np.ndarray, classifier_id: str, timestamp: datetime,
                  project_settings, sftp_server_info, 
                  callback: Optional[Callable[[Any], None]] = None):
-        """
-        Initialize a classification request.
+        """@brief Initialize a classification request.
         
-        Args:
-            frame: Frame image data (numpy array)
-            classifier_id: Classifier model identifier
-            timestamp: Processing timestamp
-            project_settings: Project settings for CSV generation
-            sftp_server_info: SFTP server configuration
-            callback: Optional callback function called with classification result
+        @param frame Frame image data as numpy array (will be copied to prevent data corruption)
+        @param classifier_id Classifier model identifier for the classification operation
+        @param timestamp Processing timestamp to associate with the classification result
+        @param project_settings Project settings used for CSV generation after classification
+        @param sftp_server_info SFTP server configuration for uploading results
+        @param callback Optional callback function called with classification result when complete
+        
+        @note The frame is copied when queued to prevent race conditions with the camera thread
         """
         self.frame = frame
         self.classifier_id = classifier_id
@@ -51,19 +52,28 @@ class ClassificationRequest:
 
 
 class ClassifierProcessorThread:
-    """
-    Manages classifier processing in a dedicated background thread.
+    """@brief Manages classifier processing in a dedicated background thread.
     
-    This class handles all frame classification asynchronously using a queue.
-    Classification requests are queued and processed one at a time in the background.
+    This class implements a queue-based asynchronous classification system that processes
+    frames independently from the camera thread. It maintains statistics, handles graceful
+    shutdown, and provides thread-safe access to processing status.
+    
+    The thread processes classification requests one at a time from a bounded queue,
+    automatically generating CSV files via the CSV writer thread upon completion.
+    
+    @note This is a singleton class - use get_classifier_processor() to obtain the instance
     """
     
     def __init__(self, thread_id: str = "classifier_processor"):
-        """
-        Initialize the classifier processor thread.
+        """@brief Initialize the classifier processor thread.
         
-        Args:
-            thread_id: Unique identifier for the thread
+        Creates the internal queue, synchronization primitives, and statistics tracking.
+        Does not start the thread - call start() to begin processing.
+        
+        @param thread_id Unique identifier for the thread (default: "classifier_processor")
+        
+        @note Queue is limited to 50 frames to prevent memory exhaustion
+        @note Statistics track: total_queued, total_processed, total_failed, total_dropped, queue_size
         """
         self.thread_id = thread_id
         self._classification_queue = queue.Queue(maxsize=50)  # Limit to prevent memory issues
@@ -82,11 +92,18 @@ class ClassifierProcessorThread:
         }
     
     def start(self) -> bool:
-        """
-        Start the classifier processor thread.
+        """@brief Start the classifier processor thread.
         
-        Returns:
-            bool: True if started successfully, False if already running
+        Creates and starts a daemon thread that processes classification requests from the queue.
+        The thread runs the _classifier_worker method which handles the actual classification.
+        
+        @return True if started successfully, False if already running
+        
+        @note Thread is created as daemon to ensure it doesn't prevent application shutdown
+        @note Thread-safe operation using internal lock
+        
+        @see stop()
+        @see _classifier_worker()
         """
         with self._lock:
             if self._running:
@@ -108,14 +125,22 @@ class ClassifierProcessorThread:
             return True
     
     def stop(self, timeout: float = 10.0) -> bool:
-        """
-        Stop the classifier processor thread gracefully.
+        """@brief Stop the classifier processor thread gracefully.
         
-        Args:
-            timeout: Maximum time to wait for thread to stop (seconds)
-            
-        Returns:
-            bool: True if stopped successfully
+        Signals the worker thread to stop and waits for it to finish processing remaining
+        items in the queue. Processes all queued classifications before shutdown to prevent
+        data loss.
+        
+        @param timeout Maximum time in seconds to wait for thread to stop (default: 10.0)
+        
+        @return True if stopped successfully, False if timeout occurred
+        
+        @note Any items remaining in queue will be processed before thread exits
+        @note Logs final statistics upon successful shutdown
+        
+        @warning If timeout occurs, thread may still be running and holding resources
+        
+        @see start()
         """
         with self._lock:
             if not self._running:
@@ -142,19 +167,42 @@ class ClassifierProcessorThread:
     def queue_classification(self, frame: np.ndarray, classifier_id: str, 
                            timestamp: datetime, project_settings, sftp_server_info,
                            callback: Optional[Callable[[Any], None]] = None) -> bool:
-        """
-        Queue a frame for classification.
+        """@brief Queue a frame for classification.
         
-        Args:
-            frame: Frame image data (numpy array)
-            classifier_id: Classifier model identifier
-            timestamp: Processing timestamp
-            project_settings: Project settings for CSV generation
-            sftp_server_info: SFTP server configuration
-            callback: Optional callback function called with classification result
-            
-        Returns:
-            bool: True if queued successfully, False if queue is full or thread not running
+        Adds a classification request to the processing queue. The frame is copied to prevent
+        data corruption from concurrent access. If the queue is full, the frame is dropped and
+        the drop counter is incremented.
+        
+        @param frame Frame image data as numpy array to classify
+        @param classifier_id Classifier model identifier to use for classification
+        @param timestamp Processing timestamp to associate with results
+        @param project_settings Project settings for CSV generation
+        @param sftp_server_info SFTP server configuration for result upload
+        @param callback Optional callback function called with classification result
+        
+        @return True if queued successfully, False if queue is full or thread not running
+        
+        @note Frame is copied internally to prevent race conditions
+        @note Non-blocking operation - returns immediately
+        @note Updates total_queued and queue_size statistics on success
+        @note Updates total_dropped statistics if queue is full
+        
+        @warning Returns False if thread is not running - check with is_running() first
+        
+        @code
+        # Queue a frame for classification
+        success = classifier_processor.queue_classification(
+            frame=current_frame,
+            classifier_id="belt_status_v1",
+            timestamp=datetime.now(),
+            project_settings=settings,
+            sftp_server_info=sftp_config
+        )
+        if not success:
+            logger.warning("Failed to queue classification")
+        @endcode
+        
+        @see ClassificationRequest
         """
         if not self._running:
             logger.warning(f"[{self.thread_id}] Cannot queue classification - thread not running")
@@ -189,10 +237,27 @@ class ClassifierProcessorThread:
             return False
     
     def _classifier_worker(self):
-        """
-        Worker function that processes the classification queue.
+        """@brief Worker function that processes the classification queue.
         
-        This runs in a separate thread and classifies frames one at a time.
+        This internal method runs in a separate thread and continuously processes classification
+        requests from the queue. For each request, it:
+        1. Runs the classifier on the frame
+        2. Queues CSV generation via the CSV writer thread
+        3. Calls any custom callback if provided
+        4. Updates statistics
+        5. Cleans up frame memory
+        
+        The worker processes remaining queue items during shutdown to prevent data loss.
+        
+        @note Runs in separate daemon thread - do not call directly
+        @note Imports are done locally to avoid circular dependencies
+        @note Automatically generates CSV files and triggers SFTP uploads via callbacks
+        @note Gracefully handles errors without crashing the thread
+        
+        @warning Frame memory is explicitly deleted to prevent memory leaks
+        
+        @see queue_classification()
+        @see ClassificationRequest
         """
         # Import here to avoid circular dependencies
         from computer_vision.classifier_image_processor import classifier_process_image
@@ -312,21 +377,42 @@ class ClassifierProcessorThread:
         logger.info(f"[{self.thread_id}] Worker stopped")
     
     def get_stats(self) -> Dict[str, Any]:
-        """
-        Get current statistics about the classifier processor thread.
+        """@brief Get current statistics about the classifier processor thread.
         
-        Returns:
-            dict: Statistics including queue size, processing counts, etc.
+        Returns a copy of the internal statistics dictionary containing processing metrics.
+        Thread-safe operation using internal lock.
+        
+        @return Dictionary with keys:
+                - total_queued: Total number of frames queued for classification
+                - total_processed: Total number of frames successfully classified
+                - total_failed: Total number of classification failures
+                - total_dropped: Total number of frames dropped due to full queue
+                - queue_size: Current number of frames waiting in queue
+        
+        @note Returns a copy to prevent external modification of internal state
+        @note Thread-safe operation
+        
+        @code
+        stats = classifier_processor.get_stats()
+        print(f"Queue size: {stats['queue_size']}")
+        print(f"Success rate: {stats['total_processed'] / stats['total_queued'] * 100:.1f}%")
+        @endcode
         """
         with self._lock:
             return self._stats.copy()
     
     def is_running(self) -> bool:
-        """
-        Check if the classifier processor thread is running.
+        """@brief Check if the classifier processor thread is running.
         
-        Returns:
-            bool: True if running, False otherwise
+        Thread-safe check of the thread's running state.
+        
+        @return True if thread is running and processing requests, False otherwise
+        
+        @note Thread-safe operation using internal lock
+        @note Returns False if thread was never started or has been stopped
+        
+        @see start()
+        @see stop()
         """
         with self._lock:
             return self._running
@@ -338,11 +424,36 @@ _instance_lock = threading.Lock()
 
 
 def get_classifier_processor() -> ClassifierProcessorThread:
-    """
-    Get the global classifier processor singleton instance.
+    """@brief Get the global classifier processor singleton instance.
     
-    Returns:
-        ClassifierProcessorThread: The global classifier processor instance
+    Returns the singleton instance of ClassifierProcessorThread, creating it if necessary.
+    Thread-safe creation using double-checked locking pattern.
+    
+    @return The global ClassifierProcessorThread singleton instance
+    
+    @note This function implements the singleton pattern - same instance returned on all calls
+    @note Thread-safe initialization using lock
+    @note Instance is created on first call (lazy initialization)
+    
+    @code
+    # Get the classifier processor instance
+    classifier_processor = get_classifier_processor()
+    
+    # Start if not already running
+    if not classifier_processor.is_running():
+        classifier_processor.start()
+    
+    # Queue a frame for classification
+    classifier_processor.queue_classification(
+        frame=frame_data,
+        classifier_id="belt_status_v2",
+        timestamp=datetime.now(),
+        project_settings=proj_settings,
+        sftp_server_info=sftp_info
+    )
+    @endcode
+    
+    @see ClassifierProcessorThread
     """
     global _classifier_processor_instance
     

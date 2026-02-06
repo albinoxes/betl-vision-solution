@@ -1,12 +1,35 @@
+## @file ml_model_image_processor.py
+#  @brief ML model image processor for object detection and particle analysis.
+#
+#  This module provides functionality for processing images with YOLO-based object detection models,
+#  analyzing detected particles, and applying configurable camera settings for filtering and measurements.
+#
+#  @author Belt Vision Team
+#  @date 2026
+
 import cv2
 from sqlite.detection_model_settings_sqlite_provider import detection_model_settings_provider
 from sqlite.ml_sqlite_provider import ml_provider
 
 
 class DetectedParticle:
-    """Represents a detected particle with its measurements and properties."""
+    """@brief Represents a detected particle with its measurements and properties.
+    
+    This class encapsulates all the measurements and calculated properties of a particle
+    detected by the object detection model, including pixel-based and real-world dimensions.
+    """
     
     def __init__(self, conf, width_px, height_px, width_mm, height_mm, max_d_mm, volume_est):
+        """@brief Initialize a DetectedParticle instance.
+        
+        @param conf Confidence score of the detection (0.0 to 1.0)
+        @param width_px Width of the particle bounding box in pixels
+        @param height_px Height of the particle bounding box in pixels
+        @param width_mm Width of the particle in millimeters
+        @param height_mm Height of the particle in millimeters
+        @param max_d_mm Maximum dimension of the particle in millimeters (width or height)
+        @param volume_est Estimated volume of the particle in cubic millimeters
+        """
         self.conf = conf
         self.width_px = width_px
         self.height_px = height_px
@@ -16,6 +39,10 @@ class DetectedParticle:
         self.volume_est = volume_est
     
     def __repr__(self):
+        """@brief String representation of the DetectedParticle.
+        
+        @return String representation with all particle measurements
+        """
         return (f"DetectedParticle(conf={self.conf:.2f}, "
                 f"width_px={self.width_px}, height_px={self.height_px}, "
                 f"width_mm={self.width_mm}, height_mm={self.height_mm}, "
@@ -23,10 +50,27 @@ class DetectedParticle:
 
 
 class CameraSettings:
-    """Represents camera settings for particle detection."""
+    """@brief Represents camera settings for particle detection.
+    
+    This class contains all configurable parameters for particle detection, including
+    confidence thresholds, pixel-to-millimeter conversion, dimension filters, and
+    volume estimation parameters.
+    """
     
     def __init__(self, min_conf, pixels_per_mm, min_d_detect, min_d_save, max_d_detect, max_d_save, 
                  particle_bb_dimension_factor, est_particle_volume_x, est_particle_volume_exp):
+        """@brief Initialize CameraSettings instance.
+        
+        @param min_conf Minimum confidence threshold for detections (0.0 to 1.0)
+        @param pixels_per_mm Conversion factor from pixels to millimeters
+        @param min_d_detect Minimum particle dimension (mm) to include in detection reports
+        @param min_d_save Minimum particle dimension (mm) to save/store
+        @param max_d_detect Maximum particle dimension (mm) to include in detection reports
+        @param max_d_save Maximum particle dimension (mm) to save/store
+        @param particle_bb_dimension_factor Factor to adjust bounding box dimensions (typically 0.9)
+        @param est_particle_volume_x Coefficient for volume estimation formula
+        @param est_particle_volume_exp Exponent for volume estimation formula (volume = x * d^exp)
+        """
         self.min_conf = min_conf
         self.pixels_per_mm = pixels_per_mm
         self.min_d_detect = min_d_detect
@@ -38,6 +82,10 @@ class CameraSettings:
         self.est_particle_volume_exp = est_particle_volume_exp
     
     def __repr__(self):
+        """@brief String representation of the CameraSettings.
+        
+        @return String representation with all camera settings
+        """
         return (f"CameraSettings(min_conf={self.min_conf}, "
                 f"pixels_per_mm={self.pixels_per_mm:.4f}, "
                 f"min_d_detect={self.min_d_detect}, min_d_save={self.min_d_save}, "
@@ -48,6 +96,26 @@ class CameraSettings:
 
 
 def get_model_from_database(model_id=None):
+    """@brief Load a machine learning model from the database.
+    
+    Retrieves a YOLO object detection model from the database. If a specific model_id
+    is provided, loads that model. Otherwise, loads the first available model.
+    
+    @param model_id Optional model identifier in format "name:version" or just "name"
+                    If None, loads the first available model from database
+    
+    @return Loaded YOLO model object, or None if no model found
+    
+    @note If model_id contains no version, defaults to version '1.0.0'
+    
+    @code
+    # Load specific model
+    model = get_model_from_database("yolov8:2.0.0")
+    
+    # Load first available model
+    model = get_model_from_database()
+    @endcode
+    """
     model = None
     
     if model_id is not None:
@@ -71,6 +139,36 @@ def get_model_from_database(model_id=None):
 
 
 def get_camera_settings(settings_id=None):
+    """@brief Load camera settings from the database.
+    
+    Retrieves camera settings configuration from the database. If a specific settings_id
+    is provided, loads those settings. Otherwise, loads the first available settings.
+    Returns default settings if none are found in the database.
+    
+    @param settings_id Optional settings identifier (name or id)
+                       If None, loads the first available settings from database
+    
+    @return CameraSettings object with loaded or default configuration
+    
+    @note Default settings are used if no settings are found in database:
+          - min_conf: 0.8
+          - pixels_per_mm: ~0.267 (calculated from 900/240)
+          - min_d_detect: 200mm
+          - min_d_save: 200mm
+          - max_d_detect: 10000mm
+          - max_d_save: 10000mm
+          - particle_bb_dimension_factor: 0.9
+          - est_particle_volume_x: 8.357470139e-11
+          - est_particle_volume_exp: 3.02511466443
+    
+    @code
+    # Load specific settings
+    settings = get_camera_settings("high_precision")
+    
+    # Load first available or default settings
+    settings = get_camera_settings()
+    @endcode
+    """
     settings = None
     if settings_id is not None:
         # Get by name or id - assuming name is used as identifier
@@ -111,24 +209,52 @@ def get_camera_settings(settings_id=None):
     )
 
 
-# Run boulder detection model
 def object_process_image(img2d, model=None, model_id=None, settings=None, settings_id=None):
-    """
-    Process an image with the boulder detection model.
+    """@brief Process an image with the object detection model.
     
-    Args:
-        img2d: Input image as numpy array
-        model: Pre-loaded model (optional, will load from DB if not provided)
-        model_id: Model identifier (optional)
-        settings: Pre-loaded CameraSettings (optional, will load from DB if not provided)
-        settings_id: Settings identifier (optional)
+    Performs object detection on an input image using a YOLO model, calculates particle
+    measurements in both pixels and millimeters, estimates volumes, and filters particles
+    based on configured dimension ranges.
     
-    Returns:
-        list: [image_path, xyxy_boxes, particles_to_detect, particles_to_save]
+    The function supports two filtering modes:
+    - Detection range (min_d_detect to max_d_detect): Particles to include in reports/CSV
+    - Save range (min_d_save to max_d_save): Particles to save/store
+    
+    @param img2d Input image as numpy array (RGBA or RGB format)
+    @param model Pre-loaded YOLO model (optional, will load from DB if not provided)
+    @param model_id Model identifier to load from database if model not provided
+    @param settings Pre-loaded CameraSettings object (optional, will load from DB if not provided)
+    @param settings_id Settings identifier to load from database if settings not provided
+    
+    @return List containing [image_path, xyxy_boxes, particles_to_detect, particles_to_save]
             - image_path: Path to the processed image
-            - xyxy_boxes: List of bounding boxes in xyxy format
+            - xyxy_boxes: List of bounding boxes in [x1, y1, x2, y2] format
             - particles_to_detect: List of DetectedParticle objects within [min_d_detect, max_d_detect] range (for reporting/CSV)
             - particles_to_save: List of DetectedParticle objects within [min_d_save, max_d_save] range (for storage)
+    
+    @throws ValueError If no model is found in the database
+    
+    @note The function:
+          1. Converts RGBA images to RGB
+          2. Runs YOLO detection with configured confidence threshold
+          3. Detects only class 1 (particles), excluding belt class
+          4. Calculates dimensions in both pixels and millimeters
+          5. Estimates particle volume using power law formula
+          6. Filters particles into two lists based on dimension ranges
+    
+    @code
+    # Process with pre-loaded model and settings
+    result = object_process_image(frame, model=my_model, settings=my_settings)
+    image_path, boxes, detect_particles, save_particles = result
+    
+    # Process with database lookup
+    result = object_process_image(frame, model_id="yolov8:1.0", settings_id="default")
+    @endcode
+    
+    @see DetectedParticle
+    @see CameraSettings
+    @see get_model_from_database
+    @see get_camera_settings
     """
     # Get model from database if not provided
     if model is None:
