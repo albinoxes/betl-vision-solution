@@ -33,7 +33,7 @@ class SocketManager:
         max_connections_per_host: int = 10,
         max_total_connections: int = 50,
         default_timeout: tuple = (5, 30),  # (connect_timeout, read_timeout)
-        stream_timeout: tuple = (5, 10)    # Shorter read timeout for streams
+        stream_timeout: tuple = (10, 60)   # Longer read timeout for continuous video streams
     ):
         """
         Initialize the socket manager.
