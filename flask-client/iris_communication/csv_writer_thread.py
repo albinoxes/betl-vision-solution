@@ -13,10 +13,10 @@ Key Features:
 """
 
 import threading
-import queue
 import time
 from typing import Optional, Dict, Any, Callable
 from datetime import datetime
+from infrastructure.base_queue_thread import BaseQueueThread
 from infrastructure.logging.logging_provider import get_logger
 
 # Initialize logger
@@ -49,7 +49,7 @@ class CsvGenerationRequest:
         self.request_time = time.time()
 
 
-class CsvWriterThread:
+class CsvWriterThread(BaseQueueThread):
     """
     Manages CSV generation in a dedicated background thread.
     
@@ -64,78 +64,22 @@ class CsvWriterThread:
         Args:
             thread_id: Unique identifier for the thread
         """
-        self.thread_id = thread_id
-        self._csv_queue = queue.Queue(maxsize=200)  # Larger queue for CSV requests
-        self._stop_event = threading.Event()
-        self._thread = None
-        self._running = False
-        self._lock = threading.Lock()
-        
-        # Statistics
-        self._stats = {
+        # Initialize base class with larger queue for CSV requests
+        super().__init__(thread_id=thread_id, queue_maxsize=200)
+    
+    def _initialize_stats(self) -> Dict[str, Any]:
+        """Initialize CSV-specific statistics."""
+        return {
             'total_queued': 0,
-            'total_written': 0,
+            'total_processed': 0,
+            'total_written': 0,  # CSV-specific: successful writes
             'total_failed': 0,
             'queue_size': 0
         }
     
-    def start(self) -> bool:
-        """
-        Start the CSV writer thread.
-        
-        Returns:
-            bool: True if started successfully, False if already running
-        """
-        with self._lock:
-            if self._running:
-                logger.warning(f"[{self.thread_id}] CSV writer thread already running")
-                return False
-            
-            self._stop_event.clear()
-            self._running = True
-            
-            # Create and start the thread
-            self._thread = threading.Thread(
-                target=self._csv_worker,
-                name=self.thread_id,
-                daemon=True
-            )
-            self._thread.start()
-            
-            logger.info(f"[{self.thread_id}] CSV writer thread started")
-            return True
-    
-    def stop(self, timeout: float = 10.0) -> bool:
-        """
-        Stop the CSV writer thread gracefully.
-        
-        Args:
-            timeout: Maximum time to wait for thread to stop (seconds)
-            
-        Returns:
-            bool: True if stopped successfully
-        """
-        with self._lock:
-            if not self._running:
-                logger.info(f"[{self.thread_id}] CSV writer thread already stopped")
-                return True
-            
-            logger.info(f"[{self.thread_id}] Stopping CSV writer thread...")
-            self._stop_event.set()
-        
-        # Wait for thread to finish
-        if self._thread and self._thread.is_alive():
-            self._thread.join(timeout=timeout)
-            if self._thread.is_alive():
-                logger.warning(f"[{self.thread_id}] CSV writer thread did not stop within {timeout}s")
-                return False
-        
-        with self._lock:
-            self._running = False
-        
-        logger.info(f"[{self.thread_id}] CSV writer thread stopped successfully")
-        logger.info(f"[{self.thread_id}] Final stats: {self._stats}")
-        return True
+    def _get_queue_timeout(self) -> float:
+        """Return timeout for queue.get() calls."""
+        return 1.0
     
     def queue_csv_generation(self, project_settings, timestamp: datetime, data,
                             folder_type: str, image_filename: str = None,
@@ -154,35 +98,18 @@ class CsvWriterThread:
         Returns:
             bool: True if queued successfully, False if queue is full or thread not running
         """
-        if not self._running:
-            logger.warning(f"[{self.thread_id}] Cannot queue CSV generation - thread not running")
-            return False
+        # Create CSV generation request
+        request = CsvGenerationRequest(
+            project_settings=project_settings,
+            timestamp=timestamp,
+            data=data,
+            folder_type=folder_type,
+            image_filename=image_filename,
+            callback=callback
+        )
         
-        try:
-            # Create CSV generation request
-            request = CsvGenerationRequest(
-                project_settings=project_settings,
-                timestamp=timestamp,
-                data=data,
-                folder_type=folder_type,
-                image_filename=image_filename,
-                callback=callback
-            )
-            
-            # Try to add to queue (non-blocking)
-            self._csv_queue.put_nowait(request)
-            
-            # Update statistics
-            with self._lock:
-                self._stats['total_queued'] += 1
-                self._stats['queue_size'] = self._csv_queue.qsize()
-            
-            logger.debug(f"[{self.thread_id}] Queued CSV generation for {folder_type} (queue size: {self._csv_queue.qsize()})")
-            return True
-            
-        except queue.Full:
-            logger.warning(f"[{self.thread_id}] CSV queue is full, dropping request")
-            return False
+        # Use base class queue_item method
+        return self.queue_item(request)
     
     def _csv_worker(self):
         """
@@ -201,133 +128,42 @@ class CsvWriterThread:
                 try:
                     request = self._csv_queue.get(timeout=1.0)
                 except queue.Empty:
-                    # No CSV requests in queue, continue loop to check stop event
-                    continue
-                
-                # Process the CSV generation request
-                csv_path = None
-                try:
-                    logger.debug(f"[{self.thread_id}] Generating CSV for {request.folder_type}")
-                    
-                    # Generate the CSV file
-                    csv_path = iris_input_processor.generate_iris_input_data(
-                        project_settings=request.project_settings,
-                        timestamp=request.timestamp,
-                        data=request.data,
-                        folder_type=request.folder_type,
-                        image_filename=request.image_filename
-                    )
-                    
-                    # Update statistics
-                    with self._lock:
-                        if csv_path:
-                            self._stats['total_written'] += 1
-                            logger.info(f"[{self.thread_id}] CSV written: {csv_path}")
-                        else:
-                            self._stats['total_failed'] += 1
-                            logger.warning(f"[{self.thread_id}] CSV generation returned None")
-                        
-                        self._stats['queue_size'] = self._csv_queue.qsize()
-                    
-                    # Call callback if provided
-                    if request.callback and csv_path:
-                        try:
-                            request.callback(csv_path)
-                        except Exception as e:
-                            logger.error(f"[{self.thread_id}] Error in callback: {e}")
-                    
-                except Exception as e:
-                    logger.error(f"[{self.thread_id}] Error generating CSV: {e}", exc_info=True)
-                    with self._lock:
-                        self._stats['total_failed'] += 1
-                
-                finally:
-                    # Mark task as done
-                    self._csv_queue.task_done()
-                
+         process_item(self, request: CsvGenerationRequest):
+        """
+        Process a single CSV generation request.
+        
+        Args:
+            request: CSV generation request to process
+        """
+        # Import here to avoid circular dependencies
+        from iris_communication.iris_input_processor import iris_input_processor
+        
+        logger.debug(f"[{self.thread_id}] Generating CSV for {request.folder_type}")
+        
+        # Generate the CSV file
+        csv_path = iris_input_processor.generate_iris_input_data(
+            project_settings=request.project_settings,
+            timestamp=request.timestamp,
+            data=request.data,
+            folder_type=request.folder_type,
+            image_filename=request.image_filename
+        )
+        
+        # Update statistics
+        with self._lock:
+            if csv_path:
+                self._stats['total_written'] += 1
+                logger.info(f"[{self.thread_id}] CSV written: {csv_path}")
+            else:
+                self._stats['total_failed'] += 1
+                logger.warning(f"[{self.thread_id}] CSV generation returned None")
+        
+        # Call callback if provided
+        if request.callback and csv_path:
+            try:
+                request.callback(csv_path)
             except Exception as e:
-                logger.error(f"[{self.thread_id}] Unexpected error in worker: {e}", exc_info=True)
-        
-        # Process any remaining items in queue before shutting down
-        remaining = self._csv_queue.qsize()
-        if remaining > 0:
-            logger.info(f"[{self.thread_id}] Processing {remaining} remaining CSV requests before shutdown...")
-            
-            from iris_communication.iris_input_processor import iris_input_processor
-            
-            while not self._csv_queue.empty():
-                try:
-                    request = self._csv_queue.get_nowait()
-                    
-                    # Generate the CSV
-                    try:
-                        csv_path = iris_input_processor.generate_iris_input_data(
-                            project_settings=request.project_settings,
-                            timestamp=request.timestamp,
-                            data=request.data,
-                            folder_type=request.folder_type,
-                            image_filename=request.image_filename
-                        )
-                        
-                        with self._lock:
-                            if csv_path:
-                                self._stats['total_written'] += 1
-                                # Call callback if provided
-                                if request.callback:
-                                    try:
-                                        request.callback(csv_path)
-                                    except Exception as e:
-                                        logger.error(f"[{self.thread_id}] Error in shutdown callback: {e}")
-                            else:
-                                self._stats['total_failed'] += 1
-                    except Exception as e:
-                        logger.error(f"[{self.thread_id}] Error during shutdown CSV generation: {e}")
-                        with self._lock:
-                            self._stats['total_failed'] += 1
-                    finally:
-                        self._csv_queue.task_done()
-                        
-                except queue.Empty:
-                    break
-        
-        logger.info(f"[{self.thread_id}] Worker stopped")
-    
-    def get_stats(self) -> Dict[str, Any]:
-        """
-        Get current statistics about the CSV writer thread.
-        
-        Returns:
-            dict: Statistics including queue size, generation counts, etc.
-        """
-        with self._lock:
-            return self._stats.copy()
-    
-    def is_running(self) -> bool:
-        """
-        Check if the CSV writer thread is running.
-        
-        Returns:
-            bool: True if running, False otherwise
-        """
-        with self._lock:
-            return self._running
-
-
-# Global singleton instance
-_csv_writer_instance = None
-_instance_lock = threading.Lock()
-
-
-def get_csv_writer() -> CsvWriterThread:
-    """
-    Get the global CSV writer singleton instance.
-    
-    Returns:
-        CsvWriterThread: The global CSV writer instance
-    """
-    global _csv_writer_instance
-    
-    if _csv_writer_instance is None:
+                logger.error(f"[{self.thread_id}] Error in callback: {e}")one:
         with _instance_lock:
             if _csv_writer_instance is None:
                 _csv_writer_instance = CsvWriterThread()

@@ -12,9 +12,9 @@ Key Features:
 """
 
 import threading
-import queue
 import time
 from typing import Optional, Dict, Any
+from infrastructure.base_queue_thread import BaseQueueThread
 from infrastructure.logging.logging_provider import get_logger
 from iris_communication.sftp_processor import sftp_processor
 from sqlite.sftp_sqlite_provider import SftpServerInfos
@@ -44,7 +44,7 @@ class SftpUploadRequest:
         self.timestamp = time.time()
 
 
-class SftpUploaderThread:
+class SftpUploaderThread(BaseQueueThread):
     """
     Manages SFTP uploads in a dedicated background thread.
     
@@ -59,78 +59,22 @@ class SftpUploaderThread:
         Args:
             thread_id: Unique identifier for the thread
         """
-        self.thread_id = thread_id
-        self._upload_queue = queue.Queue(maxsize=100)  # Limit queue size
-        self._stop_event = threading.Event()
-        self._thread = None
-        self._running = False
-        self._lock = threading.Lock()
-        
-        # Statistics
-        self._stats = {
+        # Initialize base class with queue size limit
+        super().__init__(thread_id=thread_id, queue_maxsize=100)
+    
+    def _initialize_stats(self) -> Dict[str, Any]:
+        """Initialize SFTP-specific statistics."""
+        return {
             'total_queued': 0,
-            'total_uploaded': 0,
+            'total_processed': 0,
+            'total_uploaded': 0,  # SFTP-specific: successful uploads
             'total_failed': 0,
             'queue_size': 0
         }
     
-    def start(self) -> bool:
-        """
-        Start the SFTP uploader thread.
-        
-        Returns:
-            bool: True if started successfully, False if already running
-        """
-        with self._lock:
-            if self._running:
-                logger.warning(f"[{self.thread_id}] SFTP uploader thread already running")
-                return False
-            
-            self._stop_event.clear()
-            self._running = True
-            
-            # Create and start the thread
-            self._thread = threading.Thread(
-                target=self._upload_worker,
-                name=self.thread_id,
-                daemon=True
-            )
-            self._thread.start()
-            
-            logger.info(f"[{self.thread_id}] SFTP uploader thread started")
-            return True
-    
-    def stop(self, timeout: float = 10.0) -> bool:
-        """
-        Stop the SFTP uploader thread gracefully.
-        
-        Args:
-            timeout: Maximum time to wait for thread to stop (seconds)
-            
-        Returns:
-            bool: True if stopped successfully
-        """
-        with self._lock:
-            if not self._running:
-                logger.info(f"[{self.thread_id}] SFTP uploader thread already stopped")
-                return True
-            
-            logger.info(f"[{self.thread_id}] Stopping SFTP uploader thread...")
-            self._stop_event.set()
-        
-        # Wait for thread to finish
-        if self._thread and self._thread.is_alive():
-            self._thread.join(timeout=timeout)
-            if self._thread.is_alive():
-                logger.warning(f"[{self.thread_id}] SFTP uploader thread did not stop within {timeout}s")
-                return False
-        
-        with self._lock:
-            self._running = False
-        
-        logger.info(f"[{self.thread_id}] SFTP uploader thread stopped successfully")
-        logger.info(f"[{self.thread_id}] Final stats: {self._stats}")
-        return True
+    def _get_queue_timeout(self) -> float:
+        """Return timeout for queue.get() calls."""
+        return 1.0
     
     def queue_upload(self, sftp_server_info: SftpServerInfos, file_path: str,
                      project_settings, folder_type: str) -> bool:
@@ -146,140 +90,42 @@ class SftpUploaderThread:
         Returns:
             bool: True if queued successfully, False if queue is full or thread not running
         """
-        if not self._running:
-            logger.warning(f"[{self.thread_id}] Cannot queue upload - thread not running")
-            return False
+        # Create upload request
+        request = SftpUploadRequest(
+            sftp_server_info=sftp_server_info,
+            file_path=file_path,
+            project_settings=project_settings,
+            folder_type=folder_type
+        )
         
-        try:
-            # Create upload request
-            request = SftpUploadRequest(
-                sftp_server_info=sftp_server_info,
-                file_path=file_path,
-                project_settings=project_settings,
-                folder_type=folder_type
-            )
-            
-            # Try to add to queue (non-blocking)
-            self._upload_queue.put_nowait(request)
-            
-            # Update statistics
-            with self._lock:
-                self._stats['total_queued'] += 1
-                self._stats['queue_size'] = self._upload_queue.qsize()
-            
-            logger.debug(f"[{self.thread_id}] Queued upload: {file_path} (queue size: {self._upload_queue.qsize()})")
-            return True
-            
-        except queue.Full:
-            logger.warning(f"[{self.thread_id}] Upload queue is full, dropping request for {file_path}")
-            return False
+        # Use base class queue_item method
+        return self.queue_item(request)
     
-    def _upload_worker(self):
+    def _process_item(self, request: SftpUploadRequest):
         """
-        Worker function that processes the upload queue.
+        Process a single SFTP upload request.
         
-        This runs in a separate thread and processes uploads one at a time.
+        Args:
+            request: SFTP upload request to process
         """
-        logger.info(f"[{self.thread_id}] Worker started, waiting for upload requests...")
+        logger.info(f"[{self.thread_id}] Processing upload: {request.file_path}")
         
-        while not self._stop_event.is_set():
-            try:
-                # Wait for upload request with timeout to check stop event periodically
-                try:
-                    request = self._upload_queue.get(timeout=1.0)
-                except queue.Empty:
-                    # No uploads in queue, continue loop to check stop event
-                    continue
-                
-                # Process the upload request
-                try:
-                    logger.info(f"[{self.thread_id}] Processing upload: {request.file_path}")
-                    
-                    # Perform the actual SFTP upload
-                    result = sftp_processor.transferData(
-                        sftp_server_info=request.sftp_server_info,
-                        file_path=request.file_path,
-                        project_settings=request.project_settings,
-                        folder_type=request.folder_type
-                    )
-                    
-                    # Update statistics based on result
-                    with self._lock:
-                        if result.get('success'):
-                            self._stats['total_uploaded'] += 1
-                            logger.info(f"[{self.thread_id}] Successfully uploaded: {result.get('remote_path')}")
-                        else:
-                            self._stats['total_failed'] += 1
-                            logger.error(f"[{self.thread_id}] Upload failed: {result.get('error', 'Unknown error')}")
-                        
-                        self._stats['queue_size'] = self._upload_queue.qsize()
-                    
-                except Exception as e:
-                    logger.error(f"[{self.thread_id}] Error processing upload: {e}", exc_info=True)
-                    with self._lock:
-                        self._stats['total_failed'] += 1
-                
-                finally:
-                    # Mark task as done
-                    self._upload_queue.task_done()
-                
-            except Exception as e:
-                logger.error(f"[{self.thread_id}] Unexpected error in worker: {e}", exc_info=True)
+        # Perform the actual SFTP upload
+        result = sftp_processor.transferData(
+            sftp_server_info=request.sftp_server_info,
+            file_path=request.file_path,
+            project_settings=request.project_settings,
+            folder_type=request.folder_type
+        )
         
-        # Process any remaining items in queue before shutting down
-        remaining = self._upload_queue.qsize()
-        if remaining > 0:
-            logger.info(f"[{self.thread_id}] Processing {remaining} remaining uploads before shutdown...")
-            
-            while not self._upload_queue.empty():
-                try:
-                    request = self._upload_queue.get_nowait()
-                    
-                    # Process the upload
-                    try:
-                        result = sftp_processor.transferData(
-                            sftp_server_info=request.sftp_server_info,
-                            file_path=request.file_path,
-                            project_settings=request.project_settings,
-                            folder_type=request.folder_type
-                        )
-                        
-                        with self._lock:
-                            if result.get('success'):
-                                self._stats['total_uploaded'] += 1
-                            else:
-                                self._stats['total_failed'] += 1
-                    except Exception as e:
-                        logger.error(f"[{self.thread_id}] Error during shutdown upload: {e}")
-                        with self._lock:
-                            self._stats['total_failed'] += 1
-                    finally:
-                        self._upload_queue.task_done()
-                        
-                except queue.Empty:
-                    break
-        
-        logger.info(f"[{self.thread_id}] Worker stopped")
-    
-    def get_stats(self) -> Dict[str, Any]:
-        """
-        Get current statistics about the uploader thread.
-        
-        Returns:
-            dict: Statistics including queue size, upload counts, etc.
-        """
+        # Update statistics based on result
         with self._lock:
-            return self._stats.copy()
-    
-    def is_running(self) -> bool:
-        """
-        Check if the uploader thread is running.
-        
-        Returns:
-            bool: True if running, False otherwise
-        """
-        with self._lock:
-            return self._running
+            if result.get('success'):
+                self._stats['total_uploaded'] += 1
+                logger.info(f"[{self.thread_id}] Successfully uploaded: {result.get('remote_path')}")
+            else:
+                self._stats['total_failed'] += 1
+                logger.error(f"[{self.thread_id}] Upload failed: {result.get('error', 'Unknown error')}")
 
 
 # Global singleton instance

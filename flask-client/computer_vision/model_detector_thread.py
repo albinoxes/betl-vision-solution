@@ -18,11 +18,11 @@ Key Features:
 """
 
 import threading
-import queue
 import time
 import numpy as np
 from typing import Optional, Dict, Any, Callable
 from datetime import datetime
+from infrastructure.base_queue_thread import BaseQueueThread
 from infrastructure.logging.logging_provider import get_logger
 
 # Initialize logger
@@ -70,7 +70,7 @@ class DetectionRequest:
         self.request_time = time.time()
 
 
-class ModelDetectorThread:
+class ModelDetectorThread(BaseQueueThread):
     """!
     @brief Manages object detection processing in a dedicated background thread.
     
@@ -102,15 +102,12 @@ class ModelDetectorThread:
         @note Creates queue with maxsize=50 to prevent memory issues
         @note Statistics tracking includes: total_queued, total_processed, total_failed, total_dropped
         """
-        self.thread_id = thread_id
-        self._detection_queue = queue.Queue(maxsize=50)  # Limit to prevent memory issues
-        self._stop_event = threading.Event()
-        self._thread = None
-        self._running = False
-        self._lock = threading.Lock()
-        
-        # Statistics
-        self._stats = {
+        # Initialize base class with queue size limit
+        super().__init__(thread_id=thread_id, queue_maxsize=50)
+    
+    def _initialize_stats(self) -> Dict[str, Any]:
+        """Initialize model detector-specific statistics."""
+        return {
             'total_queued': 0,
             'total_processed': 0,
             'total_failed': 0,
@@ -118,85 +115,9 @@ class ModelDetectorThread:
             'queue_size': 0
         }
     
-    def start(self) -> bool:
-        """!
-        @brief Start the model detector thread.
-        
-        @return True if started successfully, False if already running
-        
-        @note Thread runs as daemon and starts the _detector_worker() method
-        @warning Calling start() when already running will return False
-        
-        @code{.py}
-        detector = get_model_detector()
-        if detector.start():
-            print("Model detector started successfully")
-        @endcode
-        
-        @see stop(), _detector_worker()
-        """
-        with self._lock:
-            if self._running:
-                logger.warning(f"[{self.thread_id}] Model detector thread already running")
-                return False
-            
-            self._stop_event.clear()
-            self._running = True
-            
-            # Create and start the thread
-            self._thread = threading.Thread(
-                target=self._detector_worker,
-                name=self.thread_id,
-                daemon=True
-            )
-            self._thread.start()
-            
-            logger.info(f"[{self.thread_id}] Model detector thread started")
-            return True
-    
-    def stop(self, timeout: float = 10.0) -> bool:
-        """!
-        @brief Stop the model detector thread gracefully.
-        
-        @param timeout Maximum time to wait for thread to stop in seconds (default: 10.0)
-        
-        @return True if stopped successfully, False if timeout occurred
-        
-        @note Processes remaining frames in queue before shutting down
-        @note Logs final statistics upon successful shutdown
-        @warning If thread doesn't stop within timeout, returns False but thread may still be running
-        
-        @code{.py}
-        detector = get_model_detector()
-        if detector.stop(timeout=15.0):
-            print("Model detector stopped cleanly")
-        else:
-            print("Model detector did not stop within timeout")
-        @endcode
-        
-        @see start(), _detector_worker()
-        """
-        with self._lock:
-            if not self._running:
-                logger.info(f"[{self.thread_id}] Model detector thread already stopped")
-                return True
-            
-            logger.info(f"[{self.thread_id}] Stopping model detector thread...")
-            self._stop_event.set()
-        
-        # Wait for thread to finish
-        if self._thread and self._thread.is_alive():
-            self._thread.join(timeout=timeout)
-            if self._thread.is_alive():
-                logger.warning(f"[{self.thread_id}] Model detector thread did not stop within {timeout}s")
-                return False
-        
-        with self._lock:
-            self._running = False
-        
-        logger.info(f"[{self.thread_id}] Model detector thread stopped successfully")
-        logger.info(f"[{self.thread_id}] Final stats: {self._stats}")
-        return True
+    def _get_queue_timeout(self) -> float:
+        """Return timeout for queue.get() calls."""
+        return 1.0
     
     def queue_detection(self, frame: np.ndarray, model, settings, model_id: str,
                        timestamp: datetime, image_filename: str, project_settings, 
@@ -232,192 +153,90 @@ class ModelDetectorThread:
         
         @see DetectionRequest, _detector_worker()
         """
-        if not self._running:
-            logger.warning(f"[{self.thread_id}] Cannot queue detection - thread not running")
-            return False
+        # Create detection request
+        request = DetectionRequest(
+            frame=frame.copy(),  # Copy frame to avoid data corruption
+            model=model,
+            settings=settings,
+            model_id=model_id,
+            timestamp=timestamp,
+            image_filename=image_filename,
+            project_settings=project_settings,
+            sftp_server_info=sftp_server_info,
+            callback=callback
+        )
         
-        try:
-            # Create detection request
-            request = DetectionRequest(
-                frame=frame.copy(),  # Copy frame to avoid data corruption
-                model=model,
-                settings=settings,
-                model_id=model_id,
-                timestamp=timestamp,
-                image_filename=image_filename,
-                project_settings=project_settings,
-                sftp_server_info=sftp_server_info,
-                callback=callback
-            )
-            
-            # Try to add to queue (non-blocking)
-            self._detection_queue.put_nowait(request)
-            
-            # Update statistics
-            with self._lock:
-                self._stats['total_queued'] += 1
-                self._stats['queue_size'] = self._detection_queue.qsize()
-            
-            logger.debug(f"[{self.thread_id}] Queued frame for detection (queue size: {self._detection_queue.qsize()})")
-            return True
-            
-        except queue.Full:
-            logger.warning(f"[{self.thread_id}] Detection queue is full, dropping frame")
+        # Use base class queue_item method
+        success = self.queue_item(request)
+        
+        # Track dropped frames if queue was full
+        if not success and self.is_running():
             with self._lock:
                 self._stats['total_dropped'] += 1
-            return False
+        
+        return success
     
-    def _detector_worker(self):
+    def _process_item(self, request: DetectionRequest):
         """!
-        @brief Worker function that processes the detection queue.
+        @brief Process a single detection request.
+        
+        @param request Detection request to process
         
         @details
-        This method runs in a separate thread and processes detection requests one at a time.
-        It continuously polls the queue for new requests and performs object detection using
-        the ml_model_image_processor module.
+        This method performs object detection using the ml_model_image_processor module.
         
         Processing Flow:
-        1. Wait for detection request from queue (1 second timeout)
-        2. Run object detection via object_process_image()
-        3. Extract particles_to_detect (index 2) for CSV generation
-        4. Queue CSV generation with SFTP upload callback
-        5. Update statistics and call custom callback if provided
-        6. Clean up frame data to free memory
+        1. Run object detection via object_process_image()
+        2. Extract particles_to_detect (index 2) for CSV generation
+        3. Queue CSV generation with SFTP upload callback
+        4. Call custom callback if provided
+        5. Clean up frame data to free memory
         
-        Shutdown Behavior:
-        - Processes remaining frames in queue before exiting
-        - Logs final statistics
-        - Ensures graceful cleanup of resources
-        
-        @note Runs until _stop_event is set
-        @note Uses 1 second timeout to periodically check stop event
-        @warning Import statements inside method to avoid circular dependencies
-        
-        @see queue_detection(), object_process_image(), create_model_csv_callback()
+        @see object_process_image(), create_model_csv_callback()
         """
         # Import here to avoid circular dependencies
         from computer_vision.ml_model_image_processor import object_process_image
         from iris_communication.csv_writer_thread import get_csv_writer
         from controllers.camera_controller import create_model_csv_callback
         
-        logger.info(f"[{self.thread_id}] Worker started, waiting for detection requests...")
+        logger.debug(f"[{self.thread_id}] Processing frame with model {request.model_id}")
         
+        # Run object detection
+        result = object_process_image(request.frame, model=request.model, settings=request.settings)
+        
+        # result format: [image, xyxy, particles_to_detect, particles_to_save]
+        # Use particles_to_detect (index 2) for CSV/reporting
+        result_for_csv = [result[0], result[1], result[2]]
+        
+        # Create tracker for CSV callback
+        previous_csv_tracker = {'path': None}
+        
+        # Queue CSV generation with callback
         csv_writer = get_csv_writer()
+        csv_writer.queue_csv_generation(
+            project_settings=request.project_settings,
+            timestamp=request.timestamp,
+            data=result_for_csv,
+            folder_type='model',
+            image_filename=request.image_filename,
+            callback=create_model_csv_callback(
+                request.sftp_server_info,
+                request.project_settings,
+                previous_csv_tracker
+            )
+        )
         
-        while not self._stop_event.is_set():
+        # Call custom callback if provided
+        if request.callback:
             try:
-                # Wait for detection request with timeout to check stop event periodically
-                try:
-                    request = self._detection_queue.get(timeout=1.0)
-                except queue.Empty:
-                    # No detection requests in queue, continue loop to check stop event
-                    continue
-                
-                # Process the detection request
-                try:
-                    logger.debug(f"[{self.thread_id}] Processing frame with model {request.model_id}")
-                    
-                    # Run object detection
-                    result = object_process_image(request.frame, model=request.model, settings=request.settings)
-                    
-                    # result format: [image, xyxy, particles_to_detect, particles_to_save]
-                    # Use particles_to_detect (index 2) for CSV/reporting
-                    result_for_csv = [result[0], result[1], result[2]]
-                    
-                    # Create tracker for CSV callback
-                    previous_csv_tracker = {'path': None}
-                    
-                    # Queue CSV generation with callback
-                    csv_writer.queue_csv_generation(
-                        project_settings=request.project_settings,
-                        timestamp=request.timestamp,
-                        data=result_for_csv,
-                        folder_type='model',
-                        image_filename=request.image_filename,
-                        callback=create_model_csv_callback(
-                            request.sftp_server_info,
-                            request.project_settings,
-                            previous_csv_tracker
-                        )
-                    )
-                    
-                    # Update statistics
-                    with self._lock:
-                        self._stats['total_processed'] += 1
-                        self._stats['queue_size'] = self._detection_queue.qsize()
-                    
-                    # Call custom callback if provided
-                    if request.callback:
-                        try:
-                            request.callback(result)
-                        except Exception as e:
-                            logger.error(f"[{self.thread_id}] Error in callback: {e}")
-                    
-                    logger.debug(f"[{self.thread_id}] Detection complete, found {len(result[1])} objects")
-                    
-                except Exception as e:
-                    logger.error(f"[{self.thread_id}] Error processing detection: {e}", exc_info=True)
-                    with self._lock:
-                        self._stats['total_failed'] += 1
-                
-                finally:
-                    # Clean up frame data to free memory
-                    del request.frame
-                    # Mark task as done
-                    self._detection_queue.task_done()
-                
+                request.callback(result)
             except Exception as e:
-                logger.error(f"[{self.thread_id}] Unexpected error in worker: {e}", exc_info=True)
+                logger.error(f"[{self.thread_id}] Error in callback: {e}")
         
-        # Process any remaining items in queue before shutting down
-        remaining = self._detection_queue.qsize()
-        if remaining > 0:
-            logger.info(f"[{self.thread_id}] Processing {remaining} remaining frames before shutdown...")
-            
-            from computer_vision.ml_model_image_processor import object_process_image
-            from iris_communication.csv_writer_thread import get_csv_writer
-            from controllers.camera_controller import create_model_csv_callback
-            
-            csv_writer = get_csv_writer()
-            
-            while not self._detection_queue.empty():
-                try:
-                    request = self._detection_queue.get_nowait()
-                    
-                    # Process the detection
-                    try:
-                        result = object_process_image(request.frame, model=request.model, settings=request.settings)
-                        result_for_csv = [result[0], result[1], result[2]]
-                        
-                        previous_csv_tracker = {'path': None}
-                        
-                        csv_writer.queue_csv_generation(
-                            project_settings=request.project_settings,
-                            timestamp=request.timestamp,
-                            data=result_for_csv,
-                            folder_type='model',
-                            image_filename=request.image_filename,
-                            callback=create_model_csv_callback(
-                                request.sftp_server_info,
-                                request.project_settings,
-                                previous_csv_tracker
-                            )
-                        )
-                        
-                        with self._lock:
-                            self._stats['total_processed'] += 1
-                    except Exception as e:
-                        logger.error(f"[{self.thread_id}] Error during shutdown detection: {e}")
-                        with self._lock:
-                            self._stats['total_failed'] += 1
-                    finally:
-                        del request.frame
-                        self._detection_queue.task_done()
-                        
-                except queue.Empty:
-                    break
+        logger.debug(f"[{self.thread_id}] Detection complete, found {len(result[1])} objects")
         
-        logger.info(f"[{self.thread_id}] Worker stopped")
+        # Clean up frame data to free memory
+        del request.frame
     
     def get_stats(self) -> Dict[str, Any]:
         """!
