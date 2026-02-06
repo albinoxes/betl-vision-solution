@@ -14,9 +14,8 @@ import atexit
 
 app = Flask(__name__)
 
-# Initialize logging provider
+# Initialize logging provider (auto-starts on first use)
 logger = get_logger()
-logger.start()
 
 # Initialize health monitoring service
 health_service = HealthMonitoringService()
