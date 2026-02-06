@@ -701,7 +701,7 @@ def connected_devices():
     def query_legacy():
         try:
             logger.info("[Connected Devices] Querying legacy-camera-server (port 5002)...")
-            response = socket_manager.get('http://localhost:5002/devices', timeout=(2, 2))
+            response = socket_manager.get('http://localhost:5002/devices', timeout=(5, 5))
             if response.status_code == 200:
                 result = [{'type': 'legacy', 'id': dev['id'], 'info': dev['info'], 
                         'ip': dev['info'].split(';')[0] if ';' in dev['info'] else 'unknown',
@@ -715,7 +715,7 @@ def connected_devices():
     def query_webcam():
         try:
             logger.info("[Connected Devices] Querying webcam-server (port 5001)...")
-            response = socket_manager.get('http://localhost:5001/devices', timeout=(2, 2))
+            response = socket_manager.get('http://localhost:5001/devices', timeout=(5, 5))
             if response.status_code == 200:
                 result = [{'type': 'webcam', 'id': dev['id'], 'info': dev['info'],
                         'ip': 'localhost', 'status': dev['status']} for dev in response.json()]
@@ -728,7 +728,7 @@ def connected_devices():
     def query_simulator():
         try:
             logger.info("[Connected Devices] Querying simulator-server (port 5003)...")
-            response = socket_manager.get('http://localhost:5003/devices', timeout=(2, 2))
+            response = socket_manager.get('http://localhost:5003/devices', timeout=(5, 5))
             if response.status_code == 200:
                 result = [{'type': 'simulator', 'id': dev['id'], 'info': dev['info'],
                         'ip': 'localhost', 'status': dev['status']} for dev in response.json()]
@@ -812,7 +812,7 @@ def start_thread():
     
     # Check if the server is reachable before starting thread
     try:
-        check_response = socket_manager.get(server_check_url, timeout=(2, 2))
+        check_response = socket_manager.get(server_check_url, timeout=(5, 5))
         if check_response.status_code != 200:
             return jsonify({'error': f'{device_type.capitalize()} server is not responding properly (status {check_response.status_code})'}), 503
     except requests.exceptions.ConnectionError:
