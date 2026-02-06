@@ -8,6 +8,7 @@ from controllers.detection_model_settings_controller import detection_model_sett
 from controllers.health_controller import health_bp
 from infrastructure.logging.logging_provider import get_logger
 from infrastructure.monitoring import HealthMonitoringService, ServerConfig
+from iris_communication.sftp_uploader_thread import get_sftp_uploader
 import signal
 import atexit
 
@@ -15,6 +16,11 @@ app = Flask(__name__)
 
 # Initialize logging provider (auto-starts on first use)
 logger = get_logger()
+
+# Initialize and start SFTP uploader thread
+sftp_uploader = get_sftp_uploader()
+sftp_uploader.start()
+logger.info("SFTP uploader thread started")
 
 # Initialize health monitoring service
 health_service = HealthMonitoringService()
@@ -83,6 +89,13 @@ def cleanup_threads():
     
     logger.info("\nShutting down... stopping all active threads")
     
+    # Stop SFTP uploader thread first to process any remaining uploads
+    sftp_uploader = get_sftp_uploader()
+    if sftp_uploader.is_running():
+        logger.info("Stopping SFTP uploader thread...")
+        sftp_uploader.stop(timeout=15.0)  # Give extra time for remaining uploads
+        logger.info("SFTP uploader thread stopped")
+    
     thread_manager = get_thread_manager()
     thread_manager.stop_all_threads(timeout=10.0)  # Increased timeout
     
@@ -123,6 +136,11 @@ signal.signal(signal.SIGINT, signal_handler)
 # Register cleanup on exit
 def cleanup_on_exit():
     try:
+        # Stop SFTP uploader
+        sftp_uploader = get_sftp_uploader()
+        if sftp_uploader.is_running():
+            sftp_uploader.stop(timeout=5.0)
+        # Stop health service and logger
         health_service.stop_all()
         logger.stop()
     except:

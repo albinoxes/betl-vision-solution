@@ -10,16 +10,18 @@ from storage_data.store_data_manager import store_data_manager
 from sqlite.video_stream_sqlite_provider import video_stream_provider
 from iris_communication.iris_input_processor import iris_input_processor
 from iris_communication.sftp_processor import sftp_processor
+from iris_communication.sftp_uploader_thread import get_sftp_uploader
 from sqlite.sftp_sqlite_provider import sftp_provider
 from infrastructure.logging.logging_provider import get_logger
 from infrastructure.thread_manager import get_thread_manager
 from infrastructure.socket_manager import get_socket_manager
 import atexit
 
-# Initialize logger, thread manager, and socket manager
+# Initialize logger, thread manager, socket manager, and SFTP uploader
 logger = get_logger()
 thread_manager = get_thread_manager()
 socket_manager = get_socket_manager()
+sftp_uploader = get_sftp_uploader()
 
 CAMERA_URL = "http://localhost:5001/video"
 
@@ -242,20 +244,16 @@ def process_video_stream_background(thread_id, url, model_id=None, classifier_id
                                             # If a new CSV was created and we have a previous one, upload the previous via SFTP
                                             if csv_path and csv_path != previous_model_csv_path:
                                                 if previous_model_csv_path and sftp_server_info:
-                                                    try:
-                                                        logger.info(f"[SFTP] Uploading previous model CSV: {previous_model_csv_path}")
-                                                        upload_result = sftp_processor.transferData(
-                                                            sftp_server_info=sftp_server_info,
-                                                            file_path=previous_model_csv_path,
-                                                            project_settings=project_settings,
-                                                            folder_type='model'
-                                                        )
-                                                        if upload_result['success']:
-                                                            logger.info(f"[SFTP] Successfully uploaded: {upload_result['remote_path']}")
-                                                        else:
-                                                            logger.error(f"[SFTP] Upload failed: {upload_result.get('error', 'Unknown error')}")
-                                                    except Exception as e:
-                                                        logger.error(f"[SFTP] Error uploading model CSV: {e}")
+                                                    # Queue the upload instead of blocking on it
+                                                    logger.debug(f"[SFTP] Queuing model CSV for upload: {previous_model_csv_path}")
+                                                    success = sftp_uploader.queue_upload(
+                                                        sftp_server_info=sftp_server_info,
+                                                        file_path=previous_model_csv_path,
+                                                        project_settings=project_settings,
+                                                        folder_type='model'
+                                                    )
+                                                    if not success:
+                                                        logger.warning(f"[SFTP] Failed to queue model CSV upload (queue may be full)")
                                                 
                                                 # Update to current CSV path
                                                 previous_model_csv_path = csv_path
@@ -288,20 +286,16 @@ def process_video_stream_background(thread_id, url, model_id=None, classifier_id
                                             # If a new CSV was created and we have a previous one, upload the previous via SFTP
                                             if csv_path and csv_path != previous_classifier_csv_path:
                                                 if previous_classifier_csv_path and sftp_server_info:
-                                                    try:
-                                                        logger.info(f"[SFTP] Uploading previous classifier CSV: {previous_classifier_csv_path}")
-                                                        upload_result = sftp_processor.transferData(
-                                                            sftp_server_info=sftp_server_info,
-                                                            file_path=previous_classifier_csv_path,
-                                                            project_settings=project_settings,
-                                                            folder_type='classifier'
-                                                        )
-                                                        if upload_result['success']:
-                                                            logger.info(f"[SFTP] Successfully uploaded: {upload_result['remote_path']}")
-                                                        else:
-                                                            logger.error(f"[SFTP] Upload failed: {upload_result.get('error', 'Unknown error')}")
-                                                    except Exception as e:
-                                                        logger.error(f"[SFTP] Error uploading classifier CSV: {e}")
+                                                    # Queue the upload instead of blocking on it
+                                                    logger.debug(f"[SFTP] Queuing classifier CSV for upload: {previous_classifier_csv_path}")
+                                                    success = sftp_uploader.queue_upload(
+                                                        sftp_server_info=sftp_server_info,
+                                                        file_path=previous_classifier_csv_path,
+                                                        project_settings=project_settings,
+                                                        folder_type='classifier'
+                                                    )
+                                                    if not success:
+                                                        logger.warning(f"[SFTP] Failed to queue classifier CSV upload (queue may be full)")
                                                 
                                                 # Update to current CSV path
                                                 previous_classifier_csv_path = csv_path
@@ -804,6 +798,17 @@ def get_system_resources():
         'garbage_collection': gc_stats,
         'socket_manager': socket_stats,
         'logging': logging_stats
+    })
+
+@camera_bp.route('/sftp-uploader-stats')
+def get_sftp_uploader_stats():
+    """Get SFTP uploader thread statistics."""
+    stats = sftp_uploader.get_stats()
+    is_running = sftp_uploader.is_running()
+    
+    return jsonify({
+        'running': is_running,
+        'stats': stats
     })
 
 @camera_bp.route('/cleanup-resources', methods=['POST'])
