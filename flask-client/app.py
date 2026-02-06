@@ -8,6 +8,7 @@ from controllers.detection_model_settings_controller import detection_model_sett
 from controllers.health_controller import health_bp
 from infrastructure.logging.logging_provider import get_logger
 from infrastructure.monitoring import HealthMonitoringService, ServerConfig
+from iris_communication.csv_writer_thread import get_csv_writer
 from iris_communication.sftp_uploader_thread import get_sftp_uploader
 import signal
 import atexit
@@ -16,6 +17,11 @@ app = Flask(__name__)
 
 # Initialize logging provider (auto-starts on first use)
 logger = get_logger()
+
+# Initialize and start CSV writer thread
+csv_writer = get_csv_writer()
+csv_writer.start()
+logger.info("CSV writer thread started")
 
 # Initialize and start SFTP uploader thread
 sftp_uploader = get_sftp_uploader()
@@ -89,15 +95,23 @@ def cleanup_threads():
     
     logger.info("\nShutting down... stopping all active threads")
     
-    # Stop SFTP uploader thread first to process any remaining uploads
+    # Stop camera processing threads first
+    thread_manager = get_thread_manager()
+    thread_manager.stop_all_threads(timeout=10.0)
+    
+    # Stop CSV writer thread (finishes pending CSV generations)
+    csv_writer = get_csv_writer()
+    if csv_writer.is_running():
+        logger.info("Stopping CSV writer thread...")
+        csv_writer.stop(timeout=10.0)
+        logger.info("CSV writer thread stopped")
+    
+    # Stop SFTP uploader thread last (uploads any remaining CSVs)
     sftp_uploader = get_sftp_uploader()
     if sftp_uploader.is_running():
         logger.info("Stopping SFTP uploader thread...")
         sftp_uploader.stop(timeout=15.0)  # Give extra time for remaining uploads
         logger.info("SFTP uploader thread stopped")
-    
-    thread_manager = get_thread_manager()
-    thread_manager.stop_all_threads(timeout=10.0)  # Increased timeout
     
     logger.info("All threads stopped. Cleaning up resources...")
     
@@ -136,6 +150,10 @@ signal.signal(signal.SIGINT, signal_handler)
 # Register cleanup on exit
 def cleanup_on_exit():
     try:
+        # Stop CSV writer
+        csv_writer = get_csv_writer()
+        if csv_writer.is_running():
+            csv_writer.stop(timeout=5.0)
         # Stop SFTP uploader
         sftp_uploader = get_sftp_uploader()
         if sftp_uploader.is_running():

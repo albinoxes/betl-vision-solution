@@ -11,16 +11,18 @@ from sqlite.video_stream_sqlite_provider import video_stream_provider
 from iris_communication.iris_input_processor import iris_input_processor
 from iris_communication.sftp_processor import sftp_processor
 from iris_communication.sftp_uploader_thread import get_sftp_uploader
+from iris_communication.csv_writer_thread import get_csv_writer
 from sqlite.sftp_sqlite_provider import sftp_provider
 from infrastructure.logging.logging_provider import get_logger
 from infrastructure.thread_manager import get_thread_manager
 from infrastructure.socket_manager import get_socket_manager
 import atexit
 
-# Initialize logger, thread manager, socket manager, and SFTP uploader
+# Initialize logger, thread manager, socket manager, CSV writer, and SFTP uploader
 logger = get_logger()
 thread_manager = get_thread_manager()
 socket_manager = get_socket_manager()
+csv_writer = get_csv_writer()
 sftp_uploader = get_sftp_uploader()
 
 CAMERA_URL = "http://localhost:5001/video"
@@ -33,6 +35,64 @@ def generate_frames():
     # Use SocketManager for automatic cleanup
     for chunk in socket_manager.get_stream_generator(CAMERA_URL, chunk_size=1024):
         yield chunk
+
+def create_model_csv_callback(sftp_server_info, project_settings, previous_csv_tracker):
+    """
+    Create a callback function for handling model CSV completion and SFTP upload.
+    
+    Args:
+        sftp_server_info: SFTP server configuration
+        project_settings: Project settings for SFTP paths
+        previous_csv_tracker: Dict with 'path' key to track previous CSV path
+        
+    Returns:
+        Callback function that handles CSV completion
+    """
+    def on_model_csv_complete(csv_path: str):
+        # If there's a previous CSV, queue it for SFTP upload
+        if previous_csv_tracker['path'] and sftp_server_info:
+            logger.debug(f"[SFTP] Queuing model CSV for upload: {previous_csv_tracker['path']}")
+            success = sftp_uploader.queue_upload(
+                sftp_server_info=sftp_server_info,
+                file_path=previous_csv_tracker['path'],
+                project_settings=project_settings,
+                folder_type='model'
+            )
+            if not success:
+                logger.warning(f"[SFTP] Failed to queue model CSV upload (queue may be full)")
+        # Update to current CSV path
+        previous_csv_tracker['path'] = csv_path
+    
+    return on_model_csv_complete
+
+def create_classifier_csv_callback(sftp_server_info, project_settings, previous_csv_tracker):
+    """
+    Create a callback function for handling classifier CSV completion and SFTP upload.
+    
+    Args:
+        sftp_server_info: SFTP server configuration
+        project_settings: Project settings for SFTP paths
+        previous_csv_tracker: Dict with 'path' key to track previous CSV path
+        
+    Returns:
+        Callback function that handles CSV completion
+    """
+    def on_classifier_csv_complete(csv_path: str):
+        # If there's a previous CSV, queue it for SFTP upload
+        if previous_csv_tracker['path'] and sftp_server_info:
+            logger.debug(f"[SFTP] Queuing classifier CSV for upload: {previous_csv_tracker['path']}")
+            success = sftp_uploader.queue_upload(
+                sftp_server_info=sftp_server_info,
+                file_path=previous_csv_tracker['path'],
+                project_settings=project_settings,
+                folder_type='classifier'
+            )
+            if not success:
+                logger.warning(f"[SFTP] Failed to queue classifier CSV upload (queue may be full)")
+        # Update to current CSV path
+        previous_csv_tracker['path'] = csv_path
+    
+    return on_classifier_csv_complete
 
 def process_video_stream_background(thread_id, url, model_id=None, classifier_id=None, settings_id=None):
     """
@@ -84,9 +144,9 @@ def process_video_stream_background(thread_id, url, model_id=None, classifier_id
     last_classifier_processing_time = 0  # Track last time classifier was run
     last_frame_save_time = 0  # Track last time frame was saved
     
-    # Track previous CSV paths for SFTP upload
-    previous_model_csv_path = None
-    previous_classifier_csv_path = None
+    # Track previous CSV paths for SFTP upload using dicts (mutable for callbacks)
+    previous_model_csv_tracker = {'path': None}
+    previous_classifier_csv_tracker = {'path': None}
     
     # Get SFTP server info (use the first one if available)
     sftp_server_info = None
@@ -232,31 +292,19 @@ def process_video_stream_background(thread_id, url, model_id=None, classifier_id
                                             # Use particles_to_detect (index 2) for CSV/reporting
                                             result_for_csv = [result[0], result[1], result[2]]
                                             
-                                            # Generate IRIS input CSV for result with processing timestamp
-                                            csv_path = iris_input_processor.generate_iris_input_data(
+                                            # Queue CSV generation with callback (non-blocking)
+                                            csv_writer.queue_csv_generation(
                                                 project_settings=project_settings,
                                                 timestamp=processing_timestamp,
                                                 data=result_for_csv,
                                                 folder_type='model',
-                                                image_filename=filename
+                                                image_filename=filename,
+                                                callback=create_model_csv_callback(
+                                                    sftp_server_info, 
+                                                    project_settings, 
+                                                    previous_model_csv_tracker
+                                                )
                                             )
-                                            
-                                            # If a new CSV was created and we have a previous one, upload the previous via SFTP
-                                            if csv_path and csv_path != previous_model_csv_path:
-                                                if previous_model_csv_path and sftp_server_info:
-                                                    # Queue the upload instead of blocking on it
-                                                    logger.debug(f"[SFTP] Queuing model CSV for upload: {previous_model_csv_path}")
-                                                    success = sftp_uploader.queue_upload(
-                                                        sftp_server_info=sftp_server_info,
-                                                        file_path=previous_model_csv_path,
-                                                        project_settings=project_settings,
-                                                        folder_type='model'
-                                                    )
-                                                    if not success:
-                                                        logger.warning(f"[SFTP] Failed to queue model CSV upload (queue may be full)")
-                                                
-                                                # Update to current CSV path
-                                                previous_model_csv_path = csv_path
                                             
                                             # Update last processing time
                                             last_model_processing_time = current_time
@@ -275,30 +323,19 @@ def process_video_stream_background(thread_id, url, model_id=None, classifier_id
                                             # Use processing time for CSV timestamp
                                             processing_timestamp = datetime.now()
                                             belt_status = classifier_process_image(img2d.copy(), classifier_id=classifier_id)
-                                            # Generate IRIS input CSV for belt status with processing timestamp
-                                            csv_path = iris_input_processor.generate_iris_input_data(
+                                            
+                                            # Queue CSV generation with callback (non-blocking)
+                                            csv_writer.queue_csv_generation(
                                                 project_settings=project_settings,
                                                 timestamp=processing_timestamp,
                                                 data=belt_status,
-                                                folder_type='classifier'
+                                                folder_type='classifier',
+                                                callback=create_classifier_csv_callback(
+                                                    sftp_server_info,
+                                                    project_settings,
+                                                    previous_classifier_csv_tracker
+                                                )
                                             )
-                                            
-                                            # If a new CSV was created and we have a previous one, upload the previous via SFTP
-                                            if csv_path and csv_path != previous_classifier_csv_path:
-                                                if previous_classifier_csv_path and sftp_server_info:
-                                                    # Queue the upload instead of blocking on it
-                                                    logger.debug(f"[SFTP] Queuing classifier CSV for upload: {previous_classifier_csv_path}")
-                                                    success = sftp_uploader.queue_upload(
-                                                        sftp_server_info=sftp_server_info,
-                                                        file_path=previous_classifier_csv_path,
-                                                        project_settings=project_settings,
-                                                        folder_type='classifier'
-                                                    )
-                                                    if not success:
-                                                        logger.warning(f"[SFTP] Failed to queue classifier CSV upload (queue may be full)")
-                                                
-                                                # Update to current CSV path
-                                                previous_classifier_csv_path = csv_path
                                             
                                             # Update last processing time
                                             last_classifier_processing_time = current_time
@@ -798,6 +835,17 @@ def get_system_resources():
         'garbage_collection': gc_stats,
         'socket_manager': socket_stats,
         'logging': logging_stats
+    })
+
+@camera_bp.route('/csv-writer-stats')
+def get_csv_writer_stats():
+    """Get CSV writer thread statistics."""
+    stats = csv_writer.get_stats()
+    is_running = csv_writer.is_running()
+    
+    return jsonify({
+        'running': is_running,
+        'stats': stats
     })
 
 @camera_bp.route('/sftp-uploader-stats')
