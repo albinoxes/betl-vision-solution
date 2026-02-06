@@ -172,11 +172,21 @@ def classifier_process_image(img2d, classifier_id=None):
     output = classifier_model(img_transformed.unsqueeze(0))
     _, predicted_class = torch.max(output, 1)
     predicted_index = predicted_class.item()
-    belt_status = class_names[predicted_index]
     
     # Log prediction details for debugging
     from infrastructure.logging.logging_provider import get_logger
     logger = get_logger()
-    logger.debug(f"[Classifier] Prediction: class_index={predicted_index}, status='{belt_status}', raw_output={output.tolist()}")
+    logger.warning(f"[Classifier] Raw prediction: class_index={predicted_index}, model_output_shape={output.shape}, raw_scores={output[0].tolist()}")
+    logger.warning(f"[Classifier] Available class_names: {class_names} (length={len(class_names)})")
+    
+    # Validate that predicted index is within valid range
+    if predicted_index >= len(class_names):
+        logger.error(f"[Classifier] INVALID PREDICTION: Model predicted class {predicted_index} but only {len(class_names)} classes are defined!")
+        logger.error(f"[Classifier] This means your model has {output.shape[1]} output classes but should only have {len(class_names)}.")
+        logger.error(f"[Classifier] Clamping to maximum valid class index: {len(class_names) - 1}")
+        predicted_index = len(class_names) - 1  # Clamp to maximum valid index
+    
+    belt_status = class_names[predicted_index]
+    logger.info(f"[Classifier] Final result: class_index={predicted_index}, status='{belt_status}'")
     
     return belt_status

@@ -20,6 +20,28 @@ from infrastructure.logging.logging_provider import get_logger
 
 logger = get_logger()
 
+# Shared session for health checks to avoid connection pool conflicts
+_health_check_session = None
+_session_lock = threading.Lock()
+
+def get_health_check_session():
+    """Get or create a shared session for health checks."""
+    global _health_check_session
+    if _health_check_session is None:
+        with _session_lock:
+            if _health_check_session is None:
+                _health_check_session = requests.Session()
+                # Configure for health checks: small pool, no retries
+                adapter = requests.adapters.HTTPAdapter(
+                    pool_connections=5,
+                    pool_maxsize=5,
+                    max_retries=0,
+                    pool_block=False
+                )
+                _health_check_session.mount('http://', adapter)
+                _health_check_session.mount('https://', adapter)
+    return _health_check_session
+
 
 class ServerStatus(Enum):
     """Enumeration of possible server states."""
@@ -165,9 +187,12 @@ class ServerHealthMonitor(IHealthMonitor):
         Returns:
             ServerStatus indicating if server is available or not
         """
+        session = get_health_check_session()
+        
         try:
             full_url = f"http://localhost:{self._config.port}{self._config.health_endpoint}"
-            response = requests.get(full_url, timeout=self._config.timeout)
+            # Use shared session and shorter timeout for health checks
+            response = session.get(full_url, timeout=self._config.timeout)
             
             if response.status_code == 200:
                 return ServerStatus.AVAILABLE
@@ -184,7 +209,7 @@ class ServerHealthMonitor(IHealthMonitor):
             logger.debug(f"Server {self._config.name} health check timed out")
             return ServerStatus.UNAVAILABLE
         except Exception as e:
-            logger.error(f"Unexpected error checking {self._config.name}: {e}")
+            logger.debug(f"Error checking {self._config.name}: {e}")
             return ServerStatus.UNAVAILABLE
 
 

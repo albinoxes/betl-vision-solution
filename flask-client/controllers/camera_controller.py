@@ -725,46 +725,58 @@ def connected_devices():
     
     def query_legacy():
         try:
-            logger.info("[Connected Devices] Querying legacy-camera-server (port 5002)...")
-            response = socket_manager.get('http://localhost:5002/devices', timeout=(5, 5))
+            logger.debug("[Connected Devices] Querying legacy-camera-server (port 5002)...")
+            response = socket_manager.get('http://localhost:5002/devices', timeout=(2, 3))
             if response.status_code == 200:
                 result = [{'type': 'legacy', 'id': dev['id'], 'info': dev['info'], 
                         'ip': dev['info'].split(';')[0] if ';' in dev['info'] else 'unknown',
                         'status': dev['status']} for dev in response.json()]
-                logger.info(f"[Connected Devices] ✓ Legacy server responded with {len(result)} device(s)")
+                logger.debug(f"[Connected Devices] ✓ Legacy server responded with {len(result)} device(s)")
                 return result
+        except requests.exceptions.Timeout:
+            logger.debug(f"[Connected Devices] ✗ Legacy server timeout")
+        except requests.exceptions.ConnectionError:
+            logger.debug(f"[Connected Devices] ✗ Legacy server not running")
         except Exception as e:
-            logger.warning(f"[Connected Devices] ✗ Legacy server not responding: {e}")
+            logger.warning(f"[Connected Devices] ✗ Legacy server error: {e}")
         return []
     
     def query_webcam():
         try:
-            logger.info("[Connected Devices] Querying webcam-server (port 5001)...")
-            response = socket_manager.get('http://localhost:5001/devices', timeout=(5, 5))
+            logger.debug("[Connected Devices] Querying webcam-server (port 5001)...")
+            response = socket_manager.get('http://localhost:5001/devices', timeout=(2, 3))
             if response.status_code == 200:
                 result = [{'type': 'webcam', 'id': dev['id'], 'info': dev['info'],
                         'ip': 'localhost', 'status': dev['status']} for dev in response.json()]
-                logger.info(f"[Connected Devices] ✓ Webcam server responded with {len(result)} device(s)")
+                logger.debug(f"[Connected Devices] ✓ Webcam server responded with {len(result)} device(s)")
                 return result
+        except requests.exceptions.Timeout:
+            logger.debug(f"[Connected Devices] ✗ Webcam server timeout")
+        except requests.exceptions.ConnectionError:
+            logger.debug(f"[Connected Devices] ✗ Webcam server not running")
         except Exception as e:
-            logger.warning(f"[Connected Devices] ✗ Webcam server not responding: {e}")
+            logger.warning(f"[Connected Devices] ✗ Webcam server error: {e}")
         return []
     
     def query_simulator():
         try:
-            logger.info("[Connected Devices] Querying simulator-server (port 5003)...")
-            response = socket_manager.get('http://localhost:5003/devices', timeout=(5, 5))
+            logger.debug("[Connected Devices] Querying simulator-server (port 5003)...")
+            response = socket_manager.get('http://localhost:5003/devices', timeout=(2, 3))
             if response.status_code == 200:
                 result = [{'type': 'simulator', 'id': dev['id'], 'info': dev['info'],
                         'ip': 'localhost', 'status': dev['status']} for dev in response.json()]
-                logger.info(f"[Connected Devices] ✓ Simulator server responded with {len(result)} device(s)")
+                logger.debug(f"[Connected Devices] ✓ Simulator server responded with {len(result)} device(s)")
                 return result
+        except requests.exceptions.Timeout:
+            logger.debug(f"[Connected Devices] ✗ Simulator server timeout")
+        except requests.exceptions.ConnectionError:
+            logger.debug(f"[Connected Devices] ✗ Simulator server not running")
         except Exception as e:
-            logger.warning(f"[Connected Devices] ✗ Simulator server not responding: {e}")
+            logger.warning(f"[Connected Devices] ✗ Simulator server error: {e}")
         return []
     
-    logger.info("[Connected Devices] Starting parallel device query...")
-    # Execute all queries in parallel
+    logger.debug("[Connected Devices] Starting parallel device query...")
+    # Execute all queries in parallel with timeout
     with ThreadPoolExecutor(max_workers=3) as executor:
         futures = [
             executor.submit(query_legacy),
@@ -772,10 +784,14 @@ def connected_devices():
             executor.submit(query_simulator)
         ]
         
-        for future in as_completed(futures):
-            devices.extend(future.result())
+        # Use as_completed with timeout to avoid hanging
+        for future in as_completed(futures, timeout=5):
+            try:
+                devices.extend(future.result())
+            except Exception as e:
+                logger.warning(f"[Connected Devices] Query failed: {e}")
     
-    logger.info(f"[Connected Devices] Total devices found: {len(devices)}")
+    logger.debug(f"[Connected Devices] Total devices found: {len(devices)}")
     return jsonify(devices)
 
 @camera_bp.route('/camera-manager')
@@ -835,9 +851,9 @@ def start_thread():
         url = "http://localhost:5001/video"
         server_check_url = "http://localhost:5001/devices"
     
-    # Check if the server is reachable before starting thread
+    # Check if the server is reachable before starting thread (quick check)
     try:
-        check_response = socket_manager.get(server_check_url, timeout=(5, 5))
+        check_response = socket_manager.get(server_check_url, timeout=(1, 2))
         if check_response.status_code != 200:
             return jsonify({'error': f'{device_type.capitalize()} server is not responding properly (status {check_response.status_code})'}), 503
     except requests.exceptions.ConnectionError:
