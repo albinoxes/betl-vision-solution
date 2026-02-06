@@ -135,19 +135,30 @@ class ThreadManager:
             timeout: Maximum time to wait for thread to stop (seconds)
             
         Returns:
-            bool: True if thread stopped successfully, False if not found
+            bool: True if thread stopped successfully or already stopped, False if thread exists but won't stop
         """
         thread_obj = None
+        already_stopped = False
         
         with self._lock:
             if thread_id not in self._threads:
-                logger.warning(f"[ThreadManager] Thread {thread_id} not found")
-                return False
+                logger.info(f"[ThreadManager] Thread {thread_id} not found (likely already stopped and cleaned up)")
+                return True  # Thread doesn't exist = already stopped = success
+            
+            # Check if already stopped
+            if not self._threads[thread_id]['running']:
+                logger.info(f"[ThreadManager] Thread {thread_id} already stopped")
+                already_stopped = True
             
             # Immediately signal the thread to stop
             self._threads[thread_id]['running'] = False
             self._threads[thread_id]['status'] = 'stopping'
             thread_obj = self._threads[thread_id].get('thread')
+        
+        # If already stopped, just return success
+        if already_stopped:
+            logger.info(f"[ThreadManager] Thread {thread_id} was already stopped, returning success")
+            return True
         
         logger.info(f"[ThreadManager] Stopping thread {thread_id}...")
         logger.info(f"[ThreadManager] Running flag set to False immediately")
@@ -160,6 +171,8 @@ class ThreadManager:
                 return False
             else:
                 logger.info(f"[ThreadManager] Thread {thread_id} stopped successfully")
+        else:
+            logger.info(f"[ThreadManager] Thread {thread_id} is not alive, marking as stopped")
         
         # Update status
         with self._lock:

@@ -716,12 +716,17 @@ def stop_thread():
     data = request.get_json()
     thread_id = data.get('thread_id')
     
+    logger.info(f"[Stop Thread] Received request to stop thread: {thread_id}")
+    
     # Stop the thread using ThreadManager
-    success = thread_manager.stop_thread(thread_id, timeout=5.0)
+    # Note: stop_thread returns True if thread stopped OR was already stopped
+    success = thread_manager.stop_thread(thread_id, timeout=10.0)
     
     if not success:
-        return jsonify({'error': 'Thread not found or failed to stop'}), 404
+        logger.error(f"[Stop Thread] Failed to stop thread {thread_id} - thread exists but won't stop")
+        return jsonify({'error': 'Thread exists but failed to stop within timeout'}), 500
     
+    logger.info(f"[Stop Thread] Successfully stopped thread: {thread_id}")
     return jsonify({'success': True})
 
 @camera_bp.route('/active-threads')
