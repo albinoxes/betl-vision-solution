@@ -1,4 +1,5 @@
 from flask import Flask, render_template
+from flask_cors import CORS
 from controllers.camera_controller import camera_bp
 from controllers.ml_model_controller import ml_bp
 from controllers.project_controller import project_bp
@@ -16,6 +17,7 @@ import signal
 import atexit
 
 app = Flask(__name__)
+CORS(app)  # Enable CORS for all routes
 
 # Initialize logging provider (auto-starts on first use)
 logger = get_logger()
