@@ -12,6 +12,7 @@ from PIL import Image
 import torch
 import torchvision.transforms as transforms
 from sqlite.ml_sqlite_provider import ml_provider
+from sqlite.model_status_sqlite_provider import model_status_provider
 
 
 def get_classifier_from_database(classifier_id=None):
@@ -80,8 +81,27 @@ def get_classifier_from_database(classifier_id=None):
     else:
         num_classes = 3  # fallback
     
-    # Generate class names based on number of classes
-    class_names = [str(i) for i in range(num_classes)]
+    # Load class names from model_status database
+    all_statuses = model_status_provider.get_all_statuses()
+    
+    if all_statuses and len(all_statuses) > 0:
+        # Create mapping from class index to status name
+        # Assumes status IDs in database correspond to class indices (0, 1, 2)
+        class_names = {}
+        for status in all_statuses:
+            if status.id < num_classes:
+                class_names[status.id] = status.name
+        
+        # Convert to ordered list, filling gaps with string representation of index
+        class_names_list = [class_names.get(i, str(i)) for i in range(num_classes)]
+    else:
+        # Fallback to numeric strings if no statuses in database
+        class_names_list = [str(i) for i in range(num_classes)]
+    
+    # Log classifier info for debugging
+    from infrastructure.logging.logging_provider import get_logger
+    logger = get_logger()
+    logger.info(f"[Classifier] Loaded classifier with {num_classes} classes: {class_names_list}")
     
     # Default transform
     transform = transforms.Compose([
@@ -90,7 +110,7 @@ def get_classifier_from_database(classifier_id=None):
         transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
     ])
     
-    return classifier_model, class_names, transform
+    return classifier_model, class_names_list, transform
 
 
 def classifier_process_image(img2d, classifier_id=None):
@@ -151,6 +171,12 @@ def classifier_process_image(img2d, classifier_id=None):
     # Inference with belt status classifier model
     output = classifier_model(img_transformed.unsqueeze(0))
     _, predicted_class = torch.max(output, 1)
-    belt_status = class_names[predicted_class.item()]
+    predicted_index = predicted_class.item()
+    belt_status = class_names[predicted_index]
+    
+    # Log prediction details for debugging
+    from infrastructure.logging.logging_provider import get_logger
+    logger = get_logger()
+    logger.debug(f"[Classifier] Prediction: class_index={predicted_index}, status='{belt_status}', raw_output={output.tolist()}")
     
     return belt_status
