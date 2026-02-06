@@ -98,6 +98,251 @@ def create_classifier_csv_callback(sftp_server_info, project_settings, previous_
     
     return on_classifier_csv_complete
 
+def _initialize_processing_context(thread_id, model_id, classifier_id, settings_id):
+    """
+    Initialize processing context including models, settings, and project configuration.
+    
+    Args:
+        thread_id: Unique identifier for this thread
+        model_id: Optional model identifier (name:version)
+        classifier_id: Optional classifier identifier (name:version)
+        settings_id: Optional settings identifier (name)
+        
+    Returns:
+        Tuple of (settings_id, project_settings, project_title, processing_interval, sftp_server_info)
+    """
+    from sqlite.detection_model_settings_sqlite_provider import detection_model_settings_provider
+    from sqlite.project_settings_sqlite_provider import project_settings_provider
+    
+    # Load camera settings
+    if not settings_id:
+        all_settings = detection_model_settings_provider.list_settings()
+        if all_settings and len(all_settings) > 0:
+            settings_id = all_settings[0][1]
+            logger.info(f"[Thread {thread_id}] No settings specified, using first available: {settings_id}")
+        else:
+            logger.warning(f"[Thread {thread_id}] Warning: No camera settings found in database")
+    
+    # Get project settings
+    project_settings = project_settings_provider.get_project_settings()
+    project_title = project_settings.title if project_settings else "default"
+    
+    # Log IRIS configuration
+    if project_settings:
+        logger.info(f"[IRIS] Project settings loaded: {project_title}")
+        logger.info(f"[IRIS] Main folder: {project_settings.iris_main_folder}")
+        logger.info(f"[IRIS] Model subfolder: {project_settings.iris_model_subfolder}")
+        logger.info(f"[IRIS] Classifier subfolder: {project_settings.iris_classifier_subfolder}")
+        logger.info(f"[IRIS] Image processing interval: {project_settings.image_processing_interval}s")
+        processing_interval = project_settings.image_processing_interval
+    else:
+        logger.warning(f"[IRIS] Warning: No project settings found!")
+        processing_interval = PROCESSING_INTERVAL_SECONDS
+    
+    # Get SFTP server info
+    sftp_server_info = None
+    try:
+        all_sftp_servers = sftp_provider.get_all_servers()
+        if all_sftp_servers and len(all_sftp_servers) > 0:
+            sftp_server_info = all_sftp_servers[0]
+            logger.info(f"[SFTP] Using SFTP server: {sftp_server_info.server_name}")
+        else:
+            logger.info(f"[SFTP] No SFTP server configured. Files will not be uploaded.")
+    except Exception as e:
+        logger.error(f"[SFTP] Error loading SFTP server info: {e}")
+    
+    return settings_id, project_settings, project_title, processing_interval, sftp_server_info
+
+def _load_model_and_settings(model_id, settings_id, thread_id):
+    """
+    Lazy-load ML model and camera settings.
+    
+    Args:
+        model_id: Model identifier (name:version)
+        settings_id: Settings identifier (name)
+        thread_id: Thread identifier for logging
+        
+    Returns:
+        Tuple of (model, settings, model_loaded)
+    """
+    from computer_vision.ml_model_image_processor import get_model_from_database, get_camera_settings
+    
+    try:
+        logger.info(f"[Model] Lazy-loading model: {model_id}, settings: {settings_id}")
+        model = get_model_from_database(model_id)
+        settings = get_camera_settings(settings_id)
+        logger.info(f"[Model] Model loaded successfully: {model}")
+        logger.info(f"[Model] Settings loaded: {settings}")
+        return model, settings, True
+    except Exception as e:
+        logger.error(f"[Model] Error loading model or settings: {e}")
+        import traceback
+        traceback.print_exc()
+        return None, None, False
+
+def _extract_jpeg_from_frame(frame_data):
+    """
+    Extract JPEG image data from MJPEG frame.
+    
+    Args:
+        frame_data: Raw frame data from MJPEG stream
+        
+    Returns:
+        Numpy array of decoded image, or None if extraction failed
+    """
+    header_end = frame_data.find(b'\r\n\r\n')
+    if header_end == -1:
+        return None
+    
+    jpeg_start = header_end + 4
+    jpeg_end = frame_data.find(b'\r\n', jpeg_start)
+    if jpeg_end == -1:
+        jpeg_data = frame_data[jpeg_start:]
+    else:
+        jpeg_data = frame_data[jpeg_start:jpeg_end]
+    
+    # Decode JPEG to numpy array
+    nparr = np.frombuffer(jpeg_data, np.uint8)
+    img2d = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+    
+    # Clean up temporary array
+    del nparr
+    
+    return img2d
+
+def _save_frame_to_storage(img2d, thread_id, project_title, timestamp, filename):
+    """
+    Save frame to disk and database.
+    
+    Args:
+        img2d: Frame image as numpy array
+        thread_id: Thread identifier
+        project_title: Project title for camera ID
+        timestamp: Frame timestamp
+        filename: Frame filename
+        
+    Returns:
+        True if save was successful, False otherwise
+    """
+    try:
+        # Save the frame to disk with session tracking
+        filepath = store_data_manager.save_frame(img2d, session_key=thread_id, filename=filename)
+        
+        if filepath:
+            # Insert frame record into database with project_id_camera_id format
+            try:
+                full_camera_id = f"{project_title}_{thread_id}"
+                video_stream_provider.insert_segment(
+                    camera_id=full_camera_id,
+                    start_time=timestamp,
+                    file_path=filepath
+                )
+                return True
+            except Exception as e:
+                logger.error(f"Error inserting frame record to database: {e}")
+                return False
+        return False
+    except Exception as e:
+        logger.error(f"Error saving frame: {e}")
+        return False
+
+def _queue_model_detection(img2d, model, settings, model_id, filename, processing_timestamp, 
+                          project_settings, sftp_server_info):
+    """
+    Queue frame for model detection processing.
+    
+    Args:
+        img2d: Frame image as numpy array
+        model: ML model object
+        settings: Camera settings object
+        model_id: Model identifier
+        filename: Frame filename
+        processing_timestamp: Processing timestamp
+        project_settings: Project settings
+        sftp_server_info: SFTP server configuration
+        
+    Returns:
+        True if queuing was successful, False otherwise
+    """
+    try:
+        model_detector.queue_detection(
+            frame=img2d,
+            model=model,
+            settings=settings,
+            model_id=model_id,
+            timestamp=processing_timestamp,
+            image_filename=filename,
+            project_settings=project_settings,
+            sftp_server_info=sftp_server_info
+        )
+        return True
+    except Exception as e:
+        logger.error(f"Error queuing model detection: {e}")
+        return False
+
+def _queue_classifier_processing(img2d, classifier_id, processing_timestamp, 
+                                project_settings, sftp_server_info):
+    """
+    Queue frame for classifier processing.
+    
+    Args:
+        img2d: Frame image as numpy array
+        classifier_id: Classifier identifier
+        processing_timestamp: Processing timestamp
+        project_settings: Project settings
+        sftp_server_info: SFTP server configuration
+        
+    Returns:
+        True if queuing was successful, False otherwise
+    """
+    try:
+        classifier_processor.queue_classification(
+            frame=img2d,
+            classifier_id=classifier_id,
+            timestamp=processing_timestamp,
+            project_settings=project_settings,
+            sftp_server_info=sftp_server_info
+        )
+        return True
+    except Exception as e:
+        logger.error(f"Error queuing classifier: {e}")
+        return False
+
+def _cleanup_processing_resources(thread_id, model, settings):
+    """
+    Clean up processing resources and free memory.
+    
+    Args:
+        thread_id: Thread identifier
+        model: ML model object to clean up
+        settings: Settings object to clean up
+    """
+    logger.info(f"[Cleanup] Stopping thread {thread_id}")
+    
+    # Explicitly delete model to free memory
+    if model is not None:
+        try:
+            del model
+            del settings
+            logger.info(f"[Cleanup] ML model unloaded from memory")
+        except:
+            pass
+    
+    # Clean up session tracking
+    try:
+        store_data_manager.end_session(thread_id)
+    except Exception as e:
+        logger.error(f"Error ending session: {e}")
+    
+    # Force garbage collection to free memory immediately
+    import gc
+    gc.collect()
+    logger.info(f"[Cleanup] Memory freed via garbage collection")
+    
+    # Ensure stream is closed (SocketManager handles cleanup)
+    socket_manager.close_stream(thread_id)
+    logger.info(f"[Cleanup] Stream closed via SocketManager")
+
 def process_video_stream_background(thread_id, url, model_id=None, classifier_id=None, settings_id=None):
     """
     Process video stream in background thread.
@@ -109,60 +354,20 @@ def process_video_stream_background(thread_id, url, model_id=None, classifier_id
         classifier_id: Optional classifier identifier (name:version)
         settings_id: Optional settings identifier (name)
     """
+    # Initialize processing context
+    settings_id, project_settings, project_title, processing_interval, sftp_server_info = \
+        _initialize_processing_context(thread_id, model_id, classifier_id, settings_id)
+    
     # Lazy-load models only when needed (not at thread start)
-    # This reduces memory usage when models aren't actively processing
     model = None
     settings = None
     model_loaded = False
     
-    # Load camera settings before the loop starts
-    from sqlite.detection_model_settings_sqlite_provider import detection_model_settings_provider
-    if not settings_id:
-        # Get the first camera settings from the database
-        all_settings = detection_model_settings_provider.list_settings()
-        if all_settings and len(all_settings) > 0:
-            settings_id = all_settings[0][1]  # Get the name from the first setting
-            logger.info(f"[Thread {thread_id}] No settings specified, using first available: {settings_id}")
-        else:
-            logger.warning(f"[Thread {thread_id}] Warning: No camera settings found in database")
-    
-    # Get project title and settings once before processing frames
-    from sqlite.project_settings_sqlite_provider import project_settings_provider
-    project_settings = project_settings_provider.get_project_settings()
-    project_title = project_settings.title if project_settings else "default"
-    
-    # Debug logging for IRIS configuration
-    if project_settings:
-        logger.info(f"[IRIS] Project settings loaded: {project_title}")
-        logger.info(f"[IRIS] Main folder: {project_settings.iris_main_folder}")
-        logger.info(f"[IRIS] Model subfolder: {project_settings.iris_model_subfolder}")
-        logger.info(f"[IRIS] Classifier subfolder: {project_settings.iris_classifier_subfolder}")
-        logger.info(f"[IRIS] Image processing interval: {project_settings.image_processing_interval}s")
-        processing_interval = project_settings.image_processing_interval
-    else:
-        logger.warning(f"[IRIS] Warning: No project settings found!")
-        processing_interval = PROCESSING_INTERVAL_SECONDS  # Fallback to hardcoded value
-    
+    # Initialize timing trackers
     frame_count = 0
-    last_model_processing_time = 0  # Track last time model was run
-    last_classifier_processing_time = 0  # Track last time classifier was run
-    last_frame_save_time = 0  # Track last time frame was saved
-    
-    # Track previous CSV paths for SFTP upload using dicts (mutable for callbacks)
-    previous_model_csv_tracker = {'path': None}
-    previous_classifier_csv_tracker = {'path': None}
-    
-    # Get SFTP server info (use the first one if available)
-    sftp_server_info = None
-    try:
-        all_sftp_servers = sftp_provider.get_all_servers()
-        if all_sftp_servers and len(all_sftp_servers) > 0:
-            sftp_server_info = all_sftp_servers[0]
-            logger.info(f"[SFTP] Using SFTP server: {sftp_server_info.server_name}")
-        else:
-            logger.info(f"[SFTP] No SFTP server configured. Files will not be uploaded.")
-    except Exception as e:
-        logger.error(f"[SFTP] Error loading SFTP server info: {e}")
+    last_model_processing_time = 0
+    last_classifier_processing_time = 0
+    last_frame_save_time = 0
     
     # Update thread status to running
     thread_manager.set_status(thread_id, 'running')
@@ -216,133 +421,62 @@ def process_video_stream_background(thread_id, url, model_id=None, classifier_id
                         buffer = buffer[end:]
                         
                         # Extract JPEG image from frame
-                        header_end = frame_data.find(b'\r\n\r\n')
-                        if header_end != -1:
-                            jpeg_start = header_end + 4
-                            jpeg_end = frame_data.find(b'\r\n', jpeg_start)
-                            if jpeg_end == -1:
-                                jpeg_data = frame_data[jpeg_start:]
-                            else:
-                                jpeg_data = frame_data[jpeg_start:jpeg_end]
+                        img2d = _extract_jpeg_from_frame(frame_data)
+                        
+                    if img2d is not None:
+                            # Save frame to storage directory and database at the same interval as processing
+                            current_time = time.time()
+                            if current_time - last_frame_save_time >= processing_interval:
+                                timestamp = datetime.now()
+                                filename = f"frame_{timestamp.strftime('%Y%m%d_%H%M%S_%f')}.jpg"
+                                _save_frame_to_storage(img2d, thread_id, project_title, timestamp, filename)
+                                last_frame_save_time = current_time
                             
-                            # Decode JPEG to numpy array
-                            nparr = np.frombuffer(jpeg_data, np.uint8)
-                            img2d = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-                            
-                            if img2d is not None:
-                                # Save frame to storage directory and database at the same interval as processing
+                            # Lazy-load model only when we need to process
+                            if model_id and not model_loaded:
+                                model, settings, model_loaded = _load_model_and_settings(model_id, settings_id, thread_id)
+                            elif not model_id:
+                                logger.debug(f"[Model] No model_id provided, skipping model processing")
+                                
+                            # Process with ML models if specified
+                            if model is not None:
                                 current_time = time.time()
-                                if current_time - last_frame_save_time >= processing_interval:
-                                    try:
-                                        timestamp = datetime.now()
-                                        filename = f"frame_{timestamp.strftime('%Y%m%d_%H%M%S_%f')}.jpg"
-                                        
-                                        # Save the frame to disk with session tracking
-                                        filepath = store_data_manager.save_frame(img2d, session_key=thread_id, filename=filename)
-                                        
-                                        if filepath:
-                                            # Insert frame record into database with project_id_camera_id format
-                                            try:
-                                                full_camera_id = f"{project_title}_{thread_id}"
-                                                video_stream_provider.insert_segment(
-                                                    camera_id=full_camera_id,
-                                                    start_time=timestamp,
-                                                    file_path=filepath
-                                                )
-                                            except Exception as e:
-                                                logger.error(f"Error inserting frame record to database: {e}")
-                                        
-                                        # Update last frame save time
-                                        last_frame_save_time = current_time
-                                    except Exception as e:
-                                        logger.error(f"Error saving frame: {e}")
-                                
-                                # Lazy-load model only when we need to process
-                                if model_id and not model_loaded:
-                                    from computer_vision.ml_model_image_processor import get_model_from_database, get_camera_settings
-                                    try:
-                                        logger.info(f"[Model] Lazy-loading model: {model_id}, settings: {settings_id}")
-                                        model = get_model_from_database(model_id)
-                                        settings = get_camera_settings(settings_id)
-                                        model_loaded = True
-                                        logger.info(f"[Model] Model loaded successfully: {model}")
-                                        logger.info(f"[Model] Settings loaded: {settings}")
-                                    except Exception as e:
-                                        logger.error(f"[Model] Error loading model or settings: {e}")
-                                        import traceback
-                                        traceback.print_exc()
-                                        model = None
-                                        settings = None
-                                elif model_id and model_loaded:
-                                    pass  # Model already loaded
-                                else:
+                                if current_time - last_model_processing_time >= processing_interval:
+                                    logger.debug(f"[Processing] Queuing frame for model detection at {current_time:.2f}, interval: {current_time - last_model_processing_time:.2f}s")
+                                    frame_count += 1
+                                    processing_timestamp = datetime.now()
+                                    
+                                    _queue_model_detection(
+                                        img2d, model, settings, model_id, filename,
+                                        processing_timestamp, project_settings, sftp_server_info
+                                    )
+                                    
+                                    last_model_processing_time = current_time
+                            
+                            if classifier_id:
+                                current_time = time.time()
+                                if current_time - last_classifier_processing_time >= processing_interval:
+                                    logger.debug(f"[Processing] Queuing frame for classifier at {current_time:.2f}, interval: {current_time - last_classifier_processing_time:.2f}s")
+                                    # Increment frame count (if not already incremented by model)
                                     if not model_id:
-                                        logger.debug(f"[Model] No model_id provided, skipping model processing")
+                                        frame_count += 1
+                                    processing_timestamp = datetime.now()
+                                    
+                                    _queue_classifier_processing(
+                                        img2d, classifier_id, processing_timestamp,
+                                        project_settings, sftp_server_info
+                                    )
+                                    
+                                    last_classifier_processing_time = current_time
                                 
-                                # Process with ML models if specified
-                                if model is not None:
-                                    # Check if processing interval has elapsed
-                                    current_time = time.time()
-                                    if current_time - last_model_processing_time >= processing_interval:
-                                        logger.debug(f"[Processing] Queuing frame for model detection at {current_time:.2f}, interval: {current_time - last_model_processing_time:.2f}s")
-                                        try:
-                                            # Increment frame count for processed frame
-                                            frame_count += 1
-                                            # Use processing time for CSV timestamp
-                                            processing_timestamp = datetime.now()
-                                            
-                                            # Queue frame for detection (non-blocking)
-                                            model_detector.queue_detection(
-                                                frame=img2d,
-                                                model=model,
-                                                settings=settings,
-                                                model_id=model_id,
-                                                timestamp=processing_timestamp,
-                                                image_filename=filename,
-                                                project_settings=project_settings,
-                                                sftp_server_info=sftp_server_info
-                                            )
-                                            
-                                            # Update last processing time
-                                            last_model_processing_time = current_time
-                                        except Exception as e:
-                                            logger.error(f"Error queuing model detection: {e}")
-                                
-                                if classifier_id:
-                                    # Check if processing interval has elapsed
-                                    current_time = time.time()
-                                    if current_time - last_classifier_processing_time >= processing_interval:
-                                        logger.debug(f"[Processing] Queuing frame for classifier at {current_time:.2f}, interval: {current_time - last_classifier_processing_time:.2f}s")
-                                        try:
-                                            # Increment frame count for processed frame (if not already incremented by model)
-                                            if not model_id:
-                                                frame_count += 1
-                                            # Use processing time for CSV timestamp
-                                            processing_timestamp = datetime.now()
-                                            
-                                            # Queue frame for classification (non-blocking)
-                                            classifier_processor.queue_classification(
-                                                frame=img2d,
-                                                classifier_id=classifier_id,
-                                                timestamp=processing_timestamp,
-                                                project_settings=project_settings,
-                                                sftp_server_info=sftp_server_info
-                                            )
-                                            
-                                            # Update last processing time
-                                            last_classifier_processing_time = current_time
-                                        except Exception as e:
-                                            logger.error(f"Error queuing classifier: {e}")
-                                
-                                # Update frame count
-                                thread_manager.update_metadata(thread_id, {
-                                    'frame_count': frame_count,
-                                    'last_update': time.time()
-                                })
-                                
-                                # Explicitly delete numpy array to free memory
-                                del img2d
-                                del nparr
+                            # Update frame count metadata
+                            thread_manager.update_metadata(thread_id, {
+                                'frame_count': frame_count,
+                                'last_update': time.time()
+                            })
+                            
+                            # Explicitly delete numpy array to free memory
+                            del img2d
                 
                 # Stream is automatically closed by SocketManager
                 # If we got here without errors, break the retry loop
@@ -373,32 +507,8 @@ def process_video_stream_background(thread_id, url, model_id=None, classifier_id
                 # Don't retry on errors - just stop the thread
                 break
     finally:
-        # Clean up resources
-        logger.info(f"[Cleanup] Stopping thread {thread_id}")
-        
-        # Explicitly delete model to free memory
-        if model is not None:
-            try:
-                del model
-                del settings
-                logger.info(f"[Cleanup] ML model unloaded from memory")
-            except:
-                pass
-        
-        # Clean up session tracking
-        try:
-            store_data_manager.end_session(thread_id)
-        except Exception as e:
-            logger.error(f"Error ending session: {e}")
-        
-        # Force garbage collection to free memory immediately
-        import gc
-        gc.collect()
-        logger.info(f"[Cleanup] Memory freed via garbage collection")
-        
-        # Ensure stream is closed (SocketManager handles cleanup)
-        socket_manager.close_stream(thread_id)
-        logger.info(f"[Cleanup] Stream closed via SocketManager")
+        # Clean up all resources
+        _cleanup_processing_resources(thread_id, model, settings)
 
 def process_video_stream(url, model_id=None, classifier_id=None, settings_id=None):
     """
